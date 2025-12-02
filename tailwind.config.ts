@@ -57,6 +57,14 @@ export default {
           border: "hsl(var(--sidebar-border))",
           ring: "hsl(var(--sidebar-ring))",
         },
+        'love-pink': 'hsl(var(--love-pink))',
+        'soft-peach': 'hsl(var(--soft-peach))',
+        'cream': 'hsl(var(--cream))',
+        'deep-rose': 'hsl(var(--deep-rose))',
+      },
+      fontFamily: {
+        sans: ['Inter', 'sans-serif'],
+        serif: ['Playfair Display', 'serif'],
       },
       borderRadius: {
         lg: "var(--radius)",
