@@ -1,136 +1,139 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { Heart, MessageCircle, Image, Calendar, LogOut, Video } from "lucide-react";
-import { useToast } from "@/components/ui/use-toast";
+import { auth } from "@/lib/firebase";
+import { onAuthStateChanged } from "firebase/auth";
+import { api } from "@/lib/api";
+import { Heart, MessageCircle, Image, Calendar, Video } from "lucide-react";
+
+interface Feature {
+  title: string;
+  description: string;
+  icon: React.ComponentType<{ className?: string }>;
+  route: string;
+  gradient: string;
+}
 
 const Home = () => {
   const [userName, setUserName] = useState("");
   const navigate = useNavigate();
-  const { toast } = useToast();
 
   useEffect(() => {
-    checkAuth();
-  }, []);
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (!user) {
+        navigate("/auth");
+        return;
+      }
 
-  const checkAuth = async () => {
-    const { data: { session } } = await supabase.auth.getSession();
-    
-    if (!session) {
-      navigate("/auth");
-      return;
-    }
-
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("display_name")
-      .eq("user_id", session.user.id)
-      .single();
-
-    if (profile) {
-      setUserName(profile.display_name);
-    }
-  };
-
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-    toast({
-      title: "Goodbye! 👋",
-      description: "You've been logged out successfully.",
+      try {
+        const response = await api.get('/auth/profile');
+        setUserName(response.data.user.displayName || response.data.user.email);
+      } catch (error) {
+        console.error('Failed to load profile:', error);
+        setUserName(user.displayName || user.email?.split('@')[0] || 'Love');
+      }
     });
-    navigate("/auth");
-  };
+    return () => unsubscribe();
+  }, [navigate]);
 
   const features = [
     {
       title: "Chat",
-      description: "Send messages in real-time",
+      description: "Whisper sweet nothings to your love 💕",
       icon: MessageCircle,
       route: "/chat",
-      gradient: "from-primary to-accent",
+      gradient: "from-rose-400 to-pink-500",
     },
     {
       title: "Gallery",
-      description: "Share your precious moments",
+      description: "Cherish your beautiful memories together 📸",
       icon: Image,
       route: "/gallery",
-      gradient: "from-accent to-primary",
+      gradient: "from-pink-400 to-rose-500",
     },
     {
       title: "Moments",
-      description: "Your timeline together",
+      description: "Relive your journey of love 📅",
       icon: Calendar,
       route: "/moments",
-      gradient: "from-primary to-soft-peach",
+      gradient: "from-purple-400 to-pink-500",
     },
     {
       title: "Video Call",
-      description: "Connect face-to-face",
+      description: "See each other's smiles face-to-face 📹",
       icon: Video,
       route: "/video",
-      gradient: "from-soft-peach to-primary",
+      gradient: "from-pink-500 to-purple-500",
     },
   ];
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-background via-secondary/20 to-accent/10 p-4 md:p-8">
-      <div className="max-w-6xl mx-auto space-y-8 animate-fade-in">
-        {/* Header */}
-        <div className="text-center space-y-4">
-          <div className="flex justify-center">
-            <div className="bg-gradient-romantic p-6 rounded-full shadow-[var(--shadow-glow)] animate-scale-in">
-              <Heart className="w-12 h-12 text-white" fill="white" />
-            </div>
+    <div className="min-h-screen bg-gradient-to-br from-rose-50 via-pink-50 to-purple-50 dark:from-gray-900 dark:via-purple-900/20 dark:to-rose-900/20 p-4 md:p-8">
+      <div className="max-w-6xl mx-auto space-y-8">
+        {/* Welcome Header */}
+        <div className="text-center space-y-4 animate-fade-in">
+          <div className="space-y-2">
+            <h1 className="text-4xl sm:text-5xl md:text-6xl font-serif font-bold bg-gradient-to-r from-rose-600 via-pink-600 to-purple-600 bg-clip-text text-transparent leading-tight">
+              Welcome back, {userName}! 💕
+            </h1>
+            <p className="text-md sm:text-lg text-rose-600 dark:text-pink-400 font-medium">
+              Let's create more beautiful memories together
+            </p>
           </div>
-          <h1 className="text-5xl md:text-6xl font-serif font-bold gradient-text">
-            ForeverUs
-          </h1>
-          <p className="text-xl text-muted-foreground">
-            Welcome back, {userName}! 💝
-          </p>
         </div>
 
         {/* Feature Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-12">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {features.map((feature, index) => {
             const Icon = feature.icon;
             return (
-              <Card
+              <div
                 key={feature.title}
-                className="group cursor-pointer hover:shadow-[var(--shadow-soft)] transition-all duration-300 hover:scale-105 border-border/50 overflow-hidden animate-slide-up"
-                style={{ animationDelay: `${index * 100}ms` }}
+                className="group cursor-pointer"
                 onClick={() => navigate(feature.route)}
+                style={{ animationDelay: `${index * 100}ms` }}
               >
-                <CardContent className="p-6 space-y-4">
-                  <div className={`bg-gradient-to-br ${feature.gradient} p-4 rounded-2xl w-fit shadow-md group-hover:shadow-lg transition-all duration-300`}>
-                    <Icon className="w-8 h-8 text-white" />
+                <div className="h-full bg-white dark:bg-gray-800 rounded-3xl p-6 shadow-lg hover:shadow-2xl transition-all duration-300 hover:scale-105 hover:-translate-y-1 border-2 border-rose-100 dark:border-purple-700 hover:border-rose-300 dark:hover:border-purple-600 overflow-hidden relative">
+                  <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br opacity-10 rounded-full blur-3xl" style={{ background: `linear-gradient(135deg, var(--color-${feature.gradient}))` }}></div>
+                  
+                  <div className="relative space-y-3">
+                    <div className={`bg-gradient-to-br ${feature.gradient} p-3 rounded-2xl w-fit shadow-lg group-hover:shadow-xl group-hover:scale-110 transition-all`}>
+                      <Icon className="w-7 h-7 text-white" />
+                    </div>
+                    
+                    <div className="space-y-1">
+                      <h3 className="text-xl font-serif font-bold text-gray-800 dark:text-white group-hover:text-rose-600 dark:group-hover:text-pink-400 transition-colors">
+                        {feature.title}
+                      </h3>
+                      <p className="text-sm text-gray-600 dark:text-gray-400 group-hover:text-gray-700 dark:group-hover:text-gray-300 transition-colors leading-relaxed">
+                        {feature.description}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2 text-rose-500 font-semibold opacity-0 group-hover:opacity-100 transform translate-x-4 group-hover:translate-x-0 transition-all duration-300 pt-2">
+                      <span>Explore</span>
+                      <Heart className="w-4 h-4" fill="currentColor" />
+                    </div>
                   </div>
-                  <div>
-                    <h3 className="text-2xl font-serif font-semibold mb-2">
-                      {feature.title}
-                    </h3>
-                    <p className="text-muted-foreground">
-                      {feature.description}
-                    </p>
-                  </div>
-                </CardContent>
-              </Card>
+                </div>
+              </div>
             );
           })}
         </div>
 
-        {/* Logout Button */}
-        <div className="flex justify-center pt-8">
-          <Button
-            onClick={handleLogout}
-            variant="outline"
-            className="group hover:bg-destructive hover:text-destructive-foreground transition-all duration-300"
-          >
-            <LogOut className="w-4 h-4 mr-2 group-hover:animate-pulse" />
-            Logout
-          </Button>
+        {/* Quick Stats */}
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-4 pt-8">
+          <div className="bg-gradient-to-br from-rose-500 to-pink-600 rounded-2xl p-4 sm:p-6 text-white shadow-lg hover:shadow-xl transition-all">
+            <div className="text-2xl font-bold">∞</div>
+            <p className="text-xs opacity-90 mt-1">Memories Together</p>
+          </div>
+          <div className="bg-gradient-to-br from-pink-500 to-purple-600 rounded-2xl p-4 sm:p-6 text-white shadow-lg hover:shadow-xl transition-all">
+            <div className="text-2xl font-bold">24/7</div>
+            <p className="text-xs opacity-90 mt-1">Always Connected</p>
+          </div>
+          <div className="bg-gradient-to-br from-purple-500 to-rose-600 rounded-2xl p-4 sm:p-6 text-white shadow-lg hover:shadow-xl transition-all col-span-2 md:col-span-1">
+            <div className="text-2xl font-bold">❤️</div>
+            <p className="text-xs opacity-90 mt-1">Forever Yours</p>
+          </div>
         </div>
       </div>
     </div>

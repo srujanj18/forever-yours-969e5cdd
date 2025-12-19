@@ -1,22 +1,59 @@
-# Welcome to your Lovable project
+# ForeverYours - A Couple's Memory App 💕
 
-## Project info
+## Overview
+ForeverYours is a beautiful web application that lets couples share memories, chat, and keep their love story together. Built with modern web technologies including React, Express.js, MongoDB, and Firebase.
 
-**URL**: https://lovable.dev/projects/261c2600-2bdc-4789-8b9e-f9da9ec85848
+## ⚠️ Important: Updated Architecture!
 
-## How can I edit this code?
+**This project has been completely refactored!**
+- ✅ Removed Supabase completely
+- ✅ Added Express.js backend
+- ✅ MongoDB for data storage
+- ✅ Firebase for authentication
+- ✅ Nodemailer for emails
 
-There are several ways of editing your application.
+## ✨ Features
+- **🔐 Secure Authentication** - Firebase-backed user accounts
+- **💬 Real-time Chat** - Message your partner instantly
+- **📸 Photo Gallery** - Share memories with beautiful photo uploads
+- **📅 Timeline** - Document special moments together
+- **💌 Invitations** - Connect with your partner via email invitations
+- **🔒 Private & Secure** - All data encrypted and stored safely
 
-**Use Lovable**
+## 🚀 Quick Start
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/261c2600-2bdc-4789-8b9e-f9da9ec85848) and start prompting.
+### Prerequisites
+- Node.js & npm installed
+- MongoDB running locally (or use MongoDB Atlas)
+- Firebase project created
 
-Changes made via Lovable will be committed automatically to this repo.
+### Step 1: Start Backend
+```bash
+cd server
+npm install  # if not already done
+npm run dev
+```
+Wait for: `Server is running on http://localhost:5000`
 
-**Use your preferred IDE**
+### Step 2: Start Frontend
+```bash
+npm install  # if not already done
+npm run dev
+```
+Wait for: `Local: http://localhost:5173`
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+### Step 3: Open Application
+Visit http://localhost:5173 and start using!
+
+## 📖 Documentation
+
+| Document | Purpose |
+|----------|---------|
+| **QUICKSTART.md** | 3-step setup guide (START HERE!) |
+| **PROJECT_COMPLETE.md** | Comprehensive integration summary |
+| **EMAIL_SETUP.md** | How to enable email invitations |
+| **INTEGRATION_COMPLETE.md** | Architecture & design details |
+| **VERIFICATION_CHECKLIST.md** | Verify everything is working |
 
 The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
 
