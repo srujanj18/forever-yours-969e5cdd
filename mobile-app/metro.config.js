@@ -27,10 +27,9 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     moduleName.startsWith('event-target-shim') &&
     context.originModulePath.includes('react-native-webrtc')
   ) {
+    const targetFileName = moduleName.includes('/es5') ? 'es5.js' : 'index.js';
     return {
-      filePath: require.resolve(moduleName, {
-        paths: [path.dirname(context.originModulePath)],
-      }),
+      filePath: path.resolve(appNodeModules, 'event-target-shim', targetFileName),
       type: 'sourceFile',
     };
   }
