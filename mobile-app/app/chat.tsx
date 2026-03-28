@@ -4,11 +4,50 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import { router } from 'expo-router';
 import { ArrowLeft, CalendarDays, ChevronDown, Copy, Image as ImageIcon, Link2, Mic, Pause, Pencil, Phone, Play, Reply, RotateCcw, Search, Send, Square, Trash2, Users, Video } from 'lucide-react-native';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Animated, Image, Linking, Modal, PanResponder, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { Alert, Animated, AppState, Image, Linking, Modal, PanResponder, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { AppButton, AppShell, AvatarBadge, Card, EmptyState, FormModal, IconButton, ProfileShortcut, theme } from '../components/app-ui';
 import { resolveAssetUrl } from '../lib/api';
 import { useAppState } from '../lib/app-state';
 import type { Message } from '../lib/types';
+
+async function applyPlaybackAudioMode() {
+  await Audio.setIsEnabledAsync(true);
+  await Audio.setAudioModeAsync({
+    allowsRecordingIOS: false,
+    playsInSilentModeIOS: true,
+    staysActiveInBackground: true,
+    interruptionModeIOS: InterruptionModeIOS.DoNotMix,
+    interruptionModeAndroid: InterruptionModeAndroid.DuckOthers,
+    shouldDuckAndroid: true,
+    playThroughEarpieceAndroid: false,
+  });
+}
+
+async function applyRecordingAudioMode() {
+  await Audio.setIsEnabledAsync(true);
+  await Audio.setAudioModeAsync({
+    allowsRecordingIOS: true,
+    playsInSilentModeIOS: true,
+    staysActiveInBackground: true,
+    interruptionModeIOS: InterruptionModeIOS.DoNotMix,
+    interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
+    shouldDuckAndroid: false,
+    playThroughEarpieceAndroid: false,
+  });
+}
+
+async function resetAudioMode() {
+  await Audio.setIsEnabledAsync(true);
+  await Audio.setAudioModeAsync({
+    allowsRecordingIOS: false,
+    playsInSilentModeIOS: true,
+    staysActiveInBackground: false,
+    interruptionModeIOS: InterruptionModeIOS.DoNotMix,
+    interruptionModeAndroid: InterruptionModeAndroid.DuckOthers,
+    shouldDuckAndroid: true,
+    playThroughEarpieceAndroid: false,
+  });
+}
 
 const REACTION_EMOJIS = ['❤️', '😍', '😂', '😮', '😢', '🙏'];
 
@@ -161,6 +200,7 @@ export default function ChatScreen() {
   const messageLayoutsRef = useRef<Record<string, number>>({});
   const activeSoundRef = useRef<Audio.Sound | null>(null);
   const previousMessageCountRef = useRef(0);
+  const appStateRef = useRef(AppState.currentState);
 
   const partnerLabel = currentUser?.customPartnerName || partner?.displayName || 'Partner';
   const replyingMessage = useMemo(() => messages.find((message) => message._id === replyTo), [messages, replyTo]);
@@ -210,15 +250,7 @@ export default function ChatScreen() {
   };
 
   useEffect(() => {
-    void Audio.setAudioModeAsync({
-      allowsRecordingIOS: false,
-      playsInSilentModeIOS: true,
-      staysActiveInBackground: false,
-      interruptionModeIOS: InterruptionModeIOS.DoNotMix,
-      interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
-      shouldDuckAndroid: true,
-      playThroughEarpieceAndroid: false,
-    });
+    void resetAudioMode();
 
     return () => {
       if (recording) {
@@ -227,6 +259,7 @@ export default function ChatScreen() {
       if (activeSoundRef.current) {
         void activeSoundRef.current.unloadAsync().catch(() => undefined);
       }
+      void resetAudioMode().catch(() => undefined);
     };
   }, [recording]);
 
@@ -236,6 +269,16 @@ export default function ChatScreen() {
     }
     previousMessageCountRef.current = messages.length;
   }, [messages]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      appStateRef.current = nextState;
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, []);
 
   const openCallScreen = (type: 'voice' | 'video') => {
     startCall(type);
@@ -285,15 +328,7 @@ export default function ChatScreen() {
         return;
       }
 
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: false,
-        interruptionModeIOS: InterruptionModeIOS.DoNotMix,
-        interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
-        shouldDuckAndroid: true,
-        playThroughEarpieceAndroid: false,
-      });
+      await applyRecordingAudioMode();
 
       const nextRecording = new Audio.Recording();
       await nextRecording.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
@@ -314,15 +349,7 @@ export default function ChatScreen() {
       setRecording(null);
       setIsRecordingVoiceNote(false);
 
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: false,
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: false,
-        interruptionModeIOS: InterruptionModeIOS.DoNotMix,
-        interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
-        shouldDuckAndroid: true,
-        playThroughEarpieceAndroid: false,
-      });
+      await resetAudioMode();
 
       if (!uri) {
         Alert.alert('Recording unavailable', 'We could not save that voice note. Please try again.');
@@ -353,21 +380,24 @@ export default function ChatScreen() {
     if (!source) return;
 
     try {
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: false,
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: false,
-        interruptionModeIOS: InterruptionModeIOS.DoNotMix,
-        interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
-        shouldDuckAndroid: true,
-        playThroughEarpieceAndroid: false,
-      });
+      if (recording || isRecordingVoiceNote) {
+        Alert.alert('Playback unavailable', 'Finish recording your voice note before playing audio.');
+        return;
+      }
+
+      if (appStateRef.current !== 'active') {
+        Alert.alert('Playback unavailable', 'Open the chat and keep the app in front before playing a voice note.');
+        return;
+      }
+
+      await applyPlaybackAudioMode();
 
       if (playingAudioId === messageId && activeSoundRef.current) {
         await activeSoundRef.current.stopAsync();
         await activeSoundRef.current.unloadAsync();
         activeSoundRef.current = null;
         setPlayingAudioId(null);
+        await resetAudioMode();
         return;
       }
 
@@ -379,7 +409,7 @@ export default function ChatScreen() {
 
       const { sound } = await Audio.Sound.createAsync(
         { uri: source },
-        { shouldPlay: false, progressUpdateIntervalMillis: 250 },
+        { shouldPlay: true, progressUpdateIntervalMillis: 250 },
         (status) => {
           if (!status.isLoaded) {
             if ('error' in status && status.error) {
@@ -394,16 +424,17 @@ export default function ChatScreen() {
               void activeSoundRef.current.unloadAsync().catch(() => undefined);
               activeSoundRef.current = null;
             }
+            void resetAudioMode().catch(() => undefined);
           }
         }
       );
 
       activeSoundRef.current = sound;
       setPlayingAudioId(messageId);
-      await sound.playAsync();
     } catch (error: any) {
       Alert.alert('Playback failed', error?.message || 'Unable to play this voice note right now.');
       setPlayingAudioId(null);
+      await resetAudioMode().catch(() => undefined);
     }
   };
 

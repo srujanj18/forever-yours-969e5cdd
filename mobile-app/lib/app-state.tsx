@@ -97,7 +97,7 @@ type AppStateValue = {
   acceptCall: () => void;
   rejectCall: () => void;
   endCall: () => void;
-  sendOffer: (toUserId: string, offer: any) => void;
+  sendOffer: (toUserId: string, offer: any, callType?: 'voice' | 'video') => void;
   sendAnswer: (toUserId: string, answer: any) => void;
   sendIceCandidate: (toUserId: string, candidate: any) => void;
 };
@@ -587,11 +587,12 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
         setActiveCallType(null);
         loadCalls().catch(() => undefined);
       },
-      sendOffer: (toUserId, offer) => {
+      sendOffer: (toUserId, offer, callType) => {
         if (!socketRef.current) return;
         socketRef.current.emit('send-offer', {
           toUserId,
           offer,
+          callType,
         });
       },
       sendAnswer: (toUserId, answer) => {

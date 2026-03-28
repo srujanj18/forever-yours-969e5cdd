@@ -6,6 +6,7 @@
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "scheme": "togetherly",
+    "icon": "./icon.png",
     "platforms": [
       "ios",
       "android",
@@ -23,6 +24,10 @@
     },
     "android": {
       "package": "com.srujan0610.togetherly",
+      "adaptiveIcon": {
+        "foregroundImage": "./icon.png",
+        "backgroundColor": "#0A0B2E"
+      },
       "permissions": [
         "CAMERA",
         "RECORD_AUDIO"

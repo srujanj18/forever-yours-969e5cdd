@@ -199,7 +199,7 @@ export const initializeSocket = (httpServer: HTTPServer) => {
     });
 
     // Handle offer/answer exchange
-    socket.on('send-offer', (data: { toUserId: string; offer: any }) => {
+    socket.on('send-offer', (data: { toUserId: string; offer: any; callType?: 'voice' | 'video' }) => {
       try {
         const toUserSocketId = activeUsers.get(data.toUserId);
         if (toUserSocketId) {
@@ -214,6 +214,7 @@ export const initializeSocket = (httpServer: HTTPServer) => {
           io.to(toUserSocketId).emit('receive-offer', {
             offer: data.offer,
             fromUserId,
+            callType: data.callType,
           });
         }
       } catch (error) {

@@ -1,4 +1,5 @@
 import { format } from 'date-fns';
+import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av';
 import { router } from 'expo-router';
 import { Grid3X3, Mic, MicOff, Phone, PhoneOff, Plus, Radio, UserRound, Video, VideoOff, Volume2 } from 'lucide-react-native';
 import { useEffect, useRef, useState } from 'react';
@@ -8,6 +9,32 @@ import { AppButton, AppShell, Card, EmptyState, SectionTitle, theme } from '../c
 import { useAppState } from '../lib/app-state';
 
 const ICE_SERVERS = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }];
+
+async function applyCallAudioMode(callType: 'voice' | 'video') {
+  await Audio.setIsEnabledAsync(true);
+  await Audio.setAudioModeAsync({
+    allowsRecordingIOS: true,
+    playsInSilentModeIOS: true,
+    staysActiveInBackground: true,
+    interruptionModeIOS: InterruptionModeIOS.DoNotMix,
+    interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
+    shouldDuckAndroid: false,
+    playThroughEarpieceAndroid: callType === 'voice',
+  });
+}
+
+async function resetCallAudioMode() {
+  await Audio.setIsEnabledAsync(true);
+  await Audio.setAudioModeAsync({
+    allowsRecordingIOS: false,
+    playsInSilentModeIOS: true,
+    staysActiveInBackground: false,
+    interruptionModeIOS: InterruptionModeIOS.DoNotMix,
+    interruptionModeAndroid: InterruptionModeAndroid.DuckOthers,
+    shouldDuckAndroid: true,
+    playThroughEarpieceAndroid: false,
+  });
+}
 
 function CircleAction({
   icon,
@@ -192,9 +219,7 @@ export default function VideoScreen() {
   const pendingIceCandidatesRef = useRef<any[]>([]);
   const handledAcceptedAtRef = useRef(0);
 
-  if (!currentUser) return null;
-
-  const partnerName = currentUser.customPartnerName || partner?.displayName || 'your partner';
+  const partnerName = currentUser?.customPartnerName || partner?.displayName || 'your partner';
   const incomingCallerName = incomingCall?.fromUserName || partnerName;
   const screenCallType = incomingCall?.callType || activeCallType || 'voice';
   const callPartnerId = incomingCall?.fromUserId || partner?._id || null;
@@ -323,7 +348,7 @@ export default function VideoScreen() {
         offerToReceiveVideo: activeCallType === 'video',
       });
       await peerConnection.setLocalDescription(offer);
-      sendOffer(callPartnerId, offer);
+      sendOffer(callPartnerId, offer, activeCallType);
       setCallStatus(activeCallType === 'video' ? 'Ringing with video...' : 'Ringing with audio...');
     } catch (error: any) {
       Alert.alert('Call failed', error?.message || 'Unable to start this call right now.');
@@ -337,6 +362,15 @@ export default function VideoScreen() {
       resetCallSession();
     }
   }, [activeCallType, incomingCall]);
+
+  useEffect(() => {
+    if (!incomingCall && !activeCallType) {
+      void resetCallAudioMode().catch(() => undefined);
+      return;
+    }
+
+    void applyCallAudioMode(screenCallType).catch(() => undefined);
+  }, [activeCallType, incomingCall, screenCallType]);
 
   useEffect(() => {
     if (!activeCallType) return;
@@ -440,6 +474,7 @@ export default function VideoScreen() {
   useEffect(() => {
     return () => {
       resetCallSession();
+      void resetCallAudioMode().catch(() => undefined);
     };
   }, []);
 
@@ -479,6 +514,8 @@ export default function VideoScreen() {
     endCall();
     resetCallSession();
   };
+
+  if (!currentUser) return null;
 
   if (partner && (incomingCall || activeCallType)) {
     const isIncoming = !!incomingCall && !activeCallType;
