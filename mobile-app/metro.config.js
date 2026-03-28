@@ -11,8 +11,8 @@ config.resolver.nodeModulesPaths = [
   appNodeModules,
   path.resolve(appNodeModules, 'react-native', 'node_modules'),
 ];
-config.resolver.disableHierarchicalLookup = true;
-config.resolver.unstable_enableSymlinks = false;
+config.resolver.disableHierarchicalLookup = false;
+config.resolver.unstable_enableSymlinks = true;
 config.resolver.unstable_enablePackageExports = true;
 config.resolver.extraNodeModules = {
   '@firebase/app': path.resolve(appNodeModules, '@firebase', 'app'),

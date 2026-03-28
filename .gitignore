@@ -11,6 +11,8 @@ node_modules
 dist
 dist-ssr
 *.local
+.expo/
+mobile-app/.expo/
 
 # Editor directories and files
 .vscode/*
