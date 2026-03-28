@@ -1,6 +1,6 @@
 
 import express from 'express';
-import { getMessages, sendMessage, editMessage, deleteMessageForEveryone, deleteMessageForMe, addReaction, removeReaction } from '../controllers/messages';
+import { getMessages, sendMessage, sendVoiceMessage, editMessage, deleteMessageForEveryone, deleteMessageForMe, addReaction, removeReaction } from '../controllers/messages';
 import { protect } from '../middleware/auth';
 import { createRateLimit, validateMessageInput } from '../middleware/security';
 
@@ -12,6 +12,7 @@ const strictMessageRateLimit = createRateLimit(60 * 1000, 10); // 10 requests pe
 
 router.get('/', protect, getMessages);
 router.post('/', messageRateLimit, protect, validateMessageInput, sendMessage);
+router.post('/audio', messageRateLimit, protect, sendVoiceMessage);
 router.put('/:id', messageRateLimit, protect, validateMessageInput, editMessage);
 router.delete('/:id/delete-for-everyone', strictMessageRateLimit, protect, deleteMessageForEveryone);
 router.delete('/:id/delete-for-me', strictMessageRateLimit, protect, deleteMessageForMe);

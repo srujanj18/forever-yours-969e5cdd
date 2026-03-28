@@ -1,8 +1,41 @@
 import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import Media from '../models/media';
+import admin from 'firebase-admin';
 import fs from 'fs';
 import path from 'path';
+import { getFirebaseStorageBucketCandidates } from '../config/firebase';
+
+async function uploadFileToFirebaseStorage(localFilePath: string, fileName: string, mimeType: string) {
+  const bucketCandidates = getFirebaseStorageBucketCandidates();
+  let lastError: unknown;
+
+  for (const bucketName of bucketCandidates) {
+    try {
+      const bucket = admin.storage().bucket(bucketName);
+      const remotePath = `chat-media/${Date.now()}-${fileName}`;
+
+      await bucket.upload(localFilePath, {
+        destination: remotePath,
+        metadata: {
+          contentType: mimeType,
+          cacheControl: 'public, max-age=31536000',
+        },
+      });
+
+      const [signedUrl] = await bucket.file(remotePath).getSignedUrl({
+        action: 'read',
+        expires: '03-01-2500',
+      });
+
+      return signedUrl;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError || new Error('No Firebase Storage bucket is configured.');
+}
 
 // @desc    Get all media for partners
 // @route   GET /api/gallery
@@ -45,7 +78,8 @@ export const uploadMedia = async (req: AuthRequest, res: Response) => {
     }
 
     const { caption } = req.body;
-    const mediaUrl = `/uploads/${req.file.filename}`;
+    const localFilePath = path.join(process.cwd(), 'public', 'uploads', req.file.filename);
+    const mediaUrl = await uploadFileToFirebaseStorage(localFilePath, req.file.filename, req.file.mimetype);
 
     const media = new Media({
       senderId: user._id,
@@ -56,6 +90,9 @@ export const uploadMedia = async (req: AuthRequest, res: Response) => {
     });
 
     await media.save();
+    if (fs.existsSync(localFilePath)) {
+      fs.unlinkSync(localFilePath);
+    }
 
     res.status(201).json(media);
   } catch (error: any) {

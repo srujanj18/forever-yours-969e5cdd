@@ -162,10 +162,22 @@ export const csrfProtection = (req: Request, res: Response, next: NextFunction) 
     process.env.CLIENT_URL || 'http://localhost:5173',
     'http://localhost:5174', // Vite dev server
     'http://localhost:3000', // Alternative dev port
+    /^http:\/\/localhost:\d+$/, // Expo / local dev servers
+    /^http:\/\/127\.0\.0\.1:\d+$/, // Loopback local dev servers
     undefined // Allow requests without origin (proxied requests)
   ];
 
-  if (origin && !allowedOrigins.includes(origin)) {
+  const isAllowed = !origin || allowedOrigins.some((allowedOrigin) => {
+    if (allowedOrigin === undefined) {
+      return false;
+    }
+    if (typeof allowedOrigin === 'string') {
+      return allowedOrigin === origin;
+    }
+    return allowedOrigin.test(origin);
+  });
+
+  if (!isAllowed) {
     console.warn(`CSRF attempt blocked from origin: ${origin}`);
     return res.status(403).json({ error: 'Forbidden' });
   }

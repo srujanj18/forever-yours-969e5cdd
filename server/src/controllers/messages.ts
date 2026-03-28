@@ -1,8 +1,22 @@
 
 import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
+import fs from 'fs';
 import Message from '../models/message';
+import path from 'path';
 import User from '../models/user';
+
+function saveBufferToLocalUploads(buffer: Buffer, fileName: string) {
+  const uploadsDir = path.join(process.cwd(), 'public', 'uploads');
+  if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+  }
+
+  const safeName = `${Date.now()}-${fileName.replace(/[^\w.-]/g, '_')}`;
+  const localFilePath = path.join(uploadsDir, safeName);
+  fs.writeFileSync(localFilePath, buffer);
+  return `/uploads/${safeName}`;
+}
 
 // @desc    Get all messages between partners
 // @route   GET /api/messages
@@ -75,6 +89,61 @@ export const sendMessage = async (req: AuthRequest, res: Response) => {
     res.status(201).json(populatedMessage);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
+  }
+};
+
+// @desc    Send a voice message to the partner
+// @route   POST /api/messages/audio
+// @access  Private
+export const sendVoiceMessage = async (req: AuthRequest, res: Response) => {
+  const { audioBase64, mimeType, fileName, replyTo } = req.body;
+  const user = req.user;
+
+  try {
+    if (!user.partnerId) {
+      return res.status(400).json({ error: 'You are not connected with a partner to send messages.' });
+    }
+
+    if (!audioBase64 || typeof audioBase64 !== 'string') {
+      return res.status(400).json({ error: 'No audio payload provided.' });
+    }
+
+    const normalizedMimeType =
+      typeof mimeType === 'string' && mimeType.startsWith('audio/')
+        ? mimeType
+        : 'audio/m4a';
+    const normalizedFileName =
+      typeof fileName === 'string' && fileName.trim()
+        ? fileName.trim()
+        : `voice-note-${Date.now()}.m4a`;
+    const audioBuffer = Buffer.from(audioBase64, 'base64');
+    const mediaUrl = saveBufferToLocalUploads(audioBuffer, normalizedFileName);
+
+    const message = new Message({
+      senderId: user._id,
+      recipientId: user.partnerId,
+      content: '',
+      mediaUrl,
+      mediaType: normalizedMimeType,
+      messageType: 'voice',
+      replyTo: replyTo || null,
+    });
+
+    await message.save();
+
+    const populatedMessage = await Message.findById(message._id)
+      .populate('senderId', 'displayName avatarUrl')
+      .populate({
+        path: 'replyTo',
+        populate: {
+          path: 'senderId',
+          select: 'displayName avatarUrl'
+        }
+      });
+
+    res.status(201).json(populatedMessage);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || error });
   }
 };
 

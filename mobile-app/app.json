@@ -1,0 +1,26 @@
+{
+  "expo": {
+    "name": "Togetherly",
+    "slug": "togetherly",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "scheme": "togetherly",
+    "platforms": ["ios", "android", "web"],
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {},
+    "web": {
+      "themeColor": "#2563EB",
+      "backgroundColor": "#F4F7FB"
+    },
+    "plugins": [
+      "expo-router"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

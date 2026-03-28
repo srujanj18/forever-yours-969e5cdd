@@ -30,7 +30,6 @@ initializeSocket(httpServer);
 // Security middleware
 app.use(securityHeaders);
 app.use(requestLogger);
-app.use(csrfProtection);
 
 // CORS configuration
 app.use(cors({
@@ -38,6 +37,8 @@ app.use(cors({
     const allowedOrigins = [
       process.env.CLIENT_URL || 'http://localhost:5173',
       'http://localhost:5174', // Vite dev server
+      /^http:\/\/localhost:\d+$/, // Local Expo / dev servers
+      /^http:\/\/127\.0\.0\.1:\d+$/, // Local loopback dev servers
       /^https:\/\/.*\.vercel\.app$/, // Vercel deployments
     ];
 
@@ -62,6 +63,9 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
 }));
+
+app.options('*', cors());
+app.use(csrfProtection);
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));

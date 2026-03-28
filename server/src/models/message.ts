@@ -52,7 +52,7 @@ const messageSchema: Schema = new Schema({
   },
   content: {
     type: String,
-    required: true,
+    default: '',
     trim: true,
   },
   isRead: {

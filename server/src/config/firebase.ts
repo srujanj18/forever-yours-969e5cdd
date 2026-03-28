@@ -3,6 +3,10 @@ import admin from 'firebase-admin';
 import path from 'path';
 import fs from 'fs';
 
+let storageBucketCandidates: string[] = [];
+
+export const getFirebaseStorageBucketCandidates = () => storageBucketCandidates;
+
 export const initFirebase = () => {
   try {
     const credentialPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
@@ -19,9 +23,16 @@ export const initFirebase = () => {
     }
     
     const serviceAccount = JSON.parse(fs.readFileSync(absolutePath, 'utf8'));
+    storageBucketCandidates = [
+      process.env.FIREBASE_STORAGE_BUCKET,
+      serviceAccount.storageBucket,
+      serviceAccount.project_id ? `${serviceAccount.project_id}.appspot.com` : undefined,
+      serviceAccount.project_id ? `${serviceAccount.project_id}.firebasestorage.app` : undefined,
+    ].filter((value): value is string => !!value);
     
     admin.initializeApp({
       credential: admin.credential.cert(serviceAccount),
+      storageBucket: storageBucketCandidates[0],
     });
     
     console.log('Firebase Admin SDK initialized successfully');
