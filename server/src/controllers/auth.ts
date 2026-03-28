@@ -105,18 +105,21 @@ export const generateInvitation = async (req: AuthRequest, res: Response) => {
     // If partner doesn't exist or no mutual invitation, create a unique token
     const invitationToken = `INVITE-${crypto.randomBytes(20).toString('hex')}`;
     const invitationExpires = new Date(Date.now() + 3600000 * 24); // 24 hours
+    const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
+    const invitationLink = `${clientUrl}/accept-invitation?token=${invitationToken}`;
 
     currentUser.invitationToken = invitationToken;
     currentUser.invitationExpires = invitationExpires;
     await currentUser.save();
 
     // Send email to partner with invitation link
+    let emailSent = false;
     try {
-      await sendInvitationEmail(
+      emailSent = await sendInvitationEmail(
         partnerEmail,
         currentUser.displayName,
         invitationToken,
-        process.env.CLIENT_URL || 'http://localhost:5173'
+        clientUrl
       );
     } catch (emailError) {
       console.error('Failed to send invitation email:', emailError);
@@ -124,7 +127,12 @@ export const generateInvitation = async (req: AuthRequest, res: Response) => {
     }
 
     res.status(200).json({ 
-      message: `An invitation has been sent to ${partnerEmail}. They have 24 hours to accept.` 
+      message: emailSent
+        ? `An invitation has been sent to ${partnerEmail}. They have 24 hours to accept.`
+        : `Invitation created, but email delivery failed. Share the invitation link manually.`,
+      invitationToken,
+      invitationLink,
+      emailSent,
     });
 
   } catch (error: any) {

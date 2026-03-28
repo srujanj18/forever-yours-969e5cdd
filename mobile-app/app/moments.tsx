@@ -12,6 +12,11 @@ export default function MomentsScreen() {
   const [description, setDescription] = useState('');
   const [date, setDate] = useState('2026-03-27');
 
+  const formatMomentDate = (value: string) => {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? value : format(parsed, 'MMMM d, yyyy');
+  };
+
   return (
     <AppShell title="Our Moments" subtitle="The relationship timeline from the web app" headerRight={<ProfileShortcut />}>
       <SectionTitle
@@ -22,7 +27,6 @@ export default function MomentsScreen() {
 
       {moments.length === 0 ? <EmptyState title="No moments yet" subtitle="Add your first chapter to the timeline." /> : null}
 
-  if (!currentUser) return null;
       {moments.map((moment, index) => (
         <View key={moment._id} style={{ flexDirection: 'row', gap: 14 }}>
           <View style={{ alignItems: 'center' }}>
@@ -30,10 +34,10 @@ export default function MomentsScreen() {
             <View style={{ width: 2, flex: 1, backgroundColor: theme.border }} />
           </View>
           <Card style={{ flex: 1 }}>
-            <Text style={{ fontSize: 12, color: theme.secondaryText }}>{format(new Date(moment.date), 'MMMM d, yyyy')}</Text>
+            <Text style={{ fontSize: 12, color: theme.secondaryText }}>{formatMomentDate(moment.date)}</Text>
             <Text style={{ fontSize: 20, fontWeight: '800', color: theme.text }}>{moment.title}</Text>
-            <Text style={{ color: theme.secondaryText, lineHeight: 20 }}>{moment.description}</Text>
-            {moment.senderId === currentUser._id ? (
+            {moment.description ? <Text style={{ color: theme.secondaryText, lineHeight: 20 }}>{moment.description}</Text> : null}
+            {currentUser && moment.senderId === currentUser._id ? (
               <AppButton title="Delete Moment" variant="secondary" onPress={() => void deleteMoment(moment._id)} />
             ) : null}
           </Card>

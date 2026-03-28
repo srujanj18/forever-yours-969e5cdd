@@ -1,13 +1,11 @@
-import { Platform } from 'react-native';
 import { auth } from './firebase';
 
 const explicitBase = process.env.EXPO_PUBLIC_API_URL;
+const deployedBase = 'https://forever-yours-969e5cdd.onrender.com/api';
 
 export const API_BASE_URL =
   explicitBase ||
-  (Platform.OS === 'android'
-    ? 'http://10.0.2.2:5000/api'
-    : 'http://localhost:5000/api');
+  deployedBase;
 
 export const SOCKET_URL = API_BASE_URL.replace(/\/api$/, '');
 

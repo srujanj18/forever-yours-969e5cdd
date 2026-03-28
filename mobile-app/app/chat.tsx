@@ -476,19 +476,28 @@ export default function ChatScreen() {
   };
 
   const submitComposer = async () => {
-    if (!draft.trim()) return;
+    const nextMessage = draft.trim();
+    if (!nextMessage) return;
+    const currentReplyTo = replyTo;
 
     try {
       if (editingMessageId) {
-        await editMessage(editingMessageId, draft.trim());
+        await editMessage(editingMessageId, nextMessage);
         setEditingMessageId(undefined);
       } else {
-        await sendMessage(draft.trim(), replyTo);
+        setDraft('');
         setReplyTo(undefined);
+        stopTyping();
+        await sendMessage(nextMessage, currentReplyTo);
+        return;
       }
       setDraft('');
       stopTyping();
     } catch (error: any) {
+      if (!editingMessageId) {
+        setDraft(nextMessage);
+        if (currentReplyTo) setReplyTo(currentReplyTo);
+      }
       Alert.alert('Message failed', error?.message || 'Unable to send your message right now.');
     }
   };
@@ -574,7 +583,22 @@ export default function ChatScreen() {
             placeholderTextColor={theme.secondaryText}
             style={{ minHeight: 52, borderRadius: 18, borderWidth: 1, borderColor: theme.border, backgroundColor: theme.surface, paddingHorizontal: 16, color: theme.text }}
           />
-          <AppButton title="Send Invitation" onPress={() => void generateInvitation(partnerEmail)} />
+          <AppButton
+            title="Send Invitation"
+            onPress={async () => {
+              try {
+                const response = await generateInvitation(partnerEmail);
+                Alert.alert(
+                  response.emailSent ? 'Invitation sent' : 'Share this invitation link',
+                  response.emailSent
+                    ? response.message
+                    : `${response.message}\n\n${response.invitationLink || ''}`
+                );
+              } catch (error: any) {
+                Alert.alert('Invitation failed', error?.message || 'Unable to create the invitation right now.');
+              }
+            }}
+          />
         </Card>
       </AppShell>
     );
@@ -656,7 +680,15 @@ export default function ChatScreen() {
             </View>
           </View>
 
-          <ScrollView ref={scrollViewRef} style={{ flex: 1 }} contentContainerStyle={{ gap: 12, paddingBottom: 8 }}>
+          <ScrollView
+            ref={scrollViewRef}
+            style={{ flex: 1 }}
+            contentContainerStyle={{ gap: 12, paddingBottom: 8 }}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            scrollEventThrottle={16}
+            decelerationRate="fast"
+          >
             {messages.length === 0 ? <EmptyState title="No messages yet" subtitle="Start the thread and make this space feel lived in." /> : null}
             {messages.map((message) => {
               const own = message.senderId?._id === currentUser._id;

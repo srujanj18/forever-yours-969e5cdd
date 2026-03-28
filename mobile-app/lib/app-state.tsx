@@ -25,6 +25,25 @@ type IncomingCall = {
   callId?: string;
 };
 
+type CallOfferSignal = {
+  fromUserId: string;
+  offer: any;
+  callType?: 'voice' | 'video';
+  signalId: string;
+};
+
+type CallAnswerSignal = {
+  fromUserId: string;
+  answer: any;
+  signalId: string;
+};
+
+type CallIceCandidateSignal = {
+  fromUserId: string;
+  candidate: any;
+  signalId: string;
+};
+
 type AppStateValue = {
   authMode: AuthMode;
   isInitializing: boolean;
@@ -42,6 +61,10 @@ type AppStateValue = {
   partnerTyping: boolean;
   activeCallType: 'voice' | 'video' | null;
   incomingCall: IncomingCall | null;
+  callAcceptedAt: number;
+  latestOfferSignal: CallOfferSignal | null;
+  latestAnswerSignal: CallAnswerSignal | null;
+  latestIceCandidateSignal: CallIceCandidateSignal | null;
   error: string | null;
   setAuthMode: (mode: AuthMode) => void;
   signIn: (email: string, password: string) => Promise<void>;
@@ -56,7 +79,7 @@ type AppStateValue = {
   deleteMessage: (id: string, deleteForEveryone?: boolean) => Promise<void>;
   reactToMessage: (id: string, emoji: string) => Promise<void>;
   removeReaction: (id: string) => Promise<void>;
-  generateInvitation: (email: string) => Promise<void>;
+  generateInvitation: (email: string) => Promise<{ message: string; invitationLink?: string; emailSent?: boolean }>;
   acceptInvitation: (token?: string) => Promise<boolean>;
   addMoment: (title: string, description: string, date: string) => Promise<void>;
   deleteMoment: (id: string) => Promise<void>;
@@ -74,6 +97,9 @@ type AppStateValue = {
   acceptCall: () => void;
   rejectCall: () => void;
   endCall: () => void;
+  sendOffer: (toUserId: string, offer: any) => void;
+  sendAnswer: (toUserId: string, answer: any) => void;
+  sendIceCandidate: (toUserId: string, candidate: any) => void;
 };
 
 const AppStateContext = createContext<AppStateValue | null>(null);
@@ -121,6 +147,10 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   const [partnerTyping, setPartnerTyping] = useState(false);
   const [activeCallType, setActiveCallType] = useState<'voice' | 'video' | null>(null);
   const [incomingCall, setIncomingCall] = useState<IncomingCall | null>(null);
+  const [callAcceptedAt, setCallAcceptedAt] = useState(0);
+  const [latestOfferSignal, setLatestOfferSignal] = useState<CallOfferSignal | null>(null);
+  const [latestAnswerSignal, setLatestAnswerSignal] = useState<CallAnswerSignal | null>(null);
+  const [latestIceCandidateSignal, setLatestIceCandidateSignal] = useState<CallIceCandidateSignal | null>(null);
   const [error, setError] = useState<string | null>(null);
   const socketRef = useRef<Socket | null>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -234,26 +264,57 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     });
     socket.on('incoming-call', (data: IncomingCall) => {
       setIncomingCall(data);
+      setLatestOfferSignal(null);
+      setLatestAnswerSignal(null);
+      setLatestIceCandidateSignal(null);
       router.push('/video' as never);
     });
     socket.on('call-ended', async () => {
       setActiveCallType(null);
       setIncomingCall(null);
+      setLatestOfferSignal(null);
+      setLatestAnswerSignal(null);
+      setLatestIceCandidateSignal(null);
       await loadCalls();
     });
     socket.on('call-rejected', async () => {
       setActiveCallType(null);
       setIncomingCall(null);
+      setLatestOfferSignal(null);
+      setLatestAnswerSignal(null);
+      setLatestIceCandidateSignal(null);
       await loadCalls();
     });
     socket.on('call-accepted', async () => {
       setIncomingCall(null);
+      setCallAcceptedAt(Date.now());
       await loadCalls();
     });
     socket.on('call-error', ({ message }: { message: string }) => {
       setError(message || 'Call failed');
       setActiveCallType(null);
       setIncomingCall(null);
+      setLatestOfferSignal(null);
+      setLatestAnswerSignal(null);
+      setLatestIceCandidateSignal(null);
+    });
+    socket.on('receive-offer', (data: { offer: any; fromUserId: string; callType?: 'voice' | 'video' }) => {
+      setLatestOfferSignal({
+        ...data,
+        signalId: `offer-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      });
+    });
+    socket.on('receive-answer', (data: { answer: any; fromUserId: string }) => {
+      setLatestAnswerSignal({
+        ...data,
+        signalId: `answer-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      });
+    });
+    socket.on('ice-candidate', (data: { candidate: any; fromUserId: string }) => {
+      setLatestIceCandidateSignal({
+        ...data,
+        signalId: `ice-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      });
     });
     socket.on('partner-avatar-updated', async () => {
       await refreshProfile();
@@ -292,6 +353,10 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       partnerTyping,
       activeCallType,
       incomingCall,
+      callAcceptedAt,
+      latestOfferSignal,
+      latestAnswerSignal,
+      latestIceCandidateSignal,
       error,
       setAuthMode,
       signIn: async (email, password) => {
@@ -327,8 +392,37 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       refreshAll,
       refreshProfile,
       sendMessage: async (text, replyTo) => {
-        const response = await api.post<Message>('/messages', { content: text, replyTo });
-        setMessages((prev) => [...prev, response]);
+        const tempId = `temp-${Date.now()}`;
+        const optimisticMessage: Message = {
+          _id: tempId,
+          senderId: {
+            _id: currentUser?._id || tempId,
+            displayName: currentUser?.displayName || 'You',
+            avatarUrl: currentUser?.avatarUrl,
+          },
+          recipientId: {
+            _id: partner?._id || 'partner',
+            displayName: partner?.displayName || 'Partner',
+            avatarUrl: partner?.avatarUrl,
+          },
+          content: text,
+          isRead: false,
+          createdAt: new Date().toISOString(),
+          replyTo: replyTo
+            ? (messages.find((message) => message._id === replyTo)?.replyTo || messages.find((message) => message._id === replyTo)) as any
+            : null,
+          deliveryStatus: 'sent',
+        };
+
+        setMessages((prev) => [...prev, optimisticMessage]);
+
+        try {
+          const response = await api.post<Message>('/messages', { content: text, replyTo });
+          setMessages((prev) => prev.map((message) => (message._id === tempId ? response : message)));
+        } catch (error) {
+          setMessages((prev) => prev.filter((message) => message._id !== tempId));
+          throw error;
+        }
       },
       sendMediaMessage: async (asset, caption, replyTo) => {
         const uploadFormData = await buildFileFormData('file', asset, caption ? { caption } : undefined);
@@ -381,8 +475,9 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
         setMessages((prev) => prev.map((message) => (message._id === id ? response : message)));
       },
       generateInvitation: async (email) => {
-        await api.post('/auth/generate-invitation', { partnerEmail: email });
+        const response = await api.post<{ message: string; invitationLink?: string; emailSent?: boolean }>('/auth/generate-invitation', { partnerEmail: email });
         await refreshProfile();
+        return response;
       },
       acceptInvitation: async (token) => {
         if (!token) return false;
@@ -492,11 +587,33 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
         setActiveCallType(null);
         loadCalls().catch(() => undefined);
       },
+      sendOffer: (toUserId, offer) => {
+        if (!socketRef.current) return;
+        socketRef.current.emit('send-offer', {
+          toUserId,
+          offer,
+        });
+      },
+      sendAnswer: (toUserId, answer) => {
+        if (!socketRef.current) return;
+        socketRef.current.emit('send-answer', {
+          toUserId,
+          answer,
+        });
+      },
+      sendIceCandidate: (toUserId, candidate) => {
+        if (!socketRef.current) return;
+        socketRef.current.emit('ice-candidate', {
+          toUserId,
+          candidate,
+        });
+      },
     }),
     [
       activeCallType,
       authMode,
       authUser,
+      callAcceptedAt,
       calls,
       currentUser,
       error,
@@ -506,6 +623,9 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       isInitializing,
       isLoading,
       isSignedIn,
+      latestAnswerSignal,
+      latestIceCandidateSignal,
+      latestOfferSignal,
       loadCalls,
       loadGallery,
       loadGoals,

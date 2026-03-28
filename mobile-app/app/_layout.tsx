@@ -11,6 +11,9 @@ export default function RootLayout() {
         screenOptions={{
           headerShown: false,
           contentStyle: { backgroundColor: theme.background },
+          animation: 'slide_from_right',
+          animationDuration: 180,
+          gestureEnabled: true,
         }}
       />
     </AppStateProvider>

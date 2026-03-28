@@ -1,9 +1,1 @@
-# Mobile App Bug Fixes - Fix Expo Start Errors
-
-## Steps:
-
-- [x] 1. Update `lib/firebase.ts`: Fix Firebase Auth initialization with AsyncStorage persistence to resolve warning
-- [x] 2. Update `app/index.tsx`: Move router.replace to useEffect with ref to prevent render-time navigation error
-- [x] 3. Update `lib/types.ts`: Remove unused AsyncStorage import
-- [x] 4. Test changes: cd mobile-app && npx expo start --clear (verify no warning, no React error, proper auth redirect)
-- [ ] 5. Complete: Use attempt_completion
+# Expo Android Fix - Updated for Bundling Error&#10;&#10;## 0: Fix Bundling Error (event-target-shim missing)&#10;**Status:** ⏳ Pending**&#10;```bash&#10;cd mobile-app&#10;npm install event-target-shim&#10;npx expo install --fix&#10;npx expo start --clear  # Test bundling succeeds&#10;```&#10;Expected: No "Unable to resolve event-target-shim" error.&#10;&#10;## Step 1: Emulator&#10;**Status:** ✅ Running (Pixel_6a)&#10;&#10;## Step 2: EAS Login&#10;**Status:** Pending&#10;```bash&#10;cd mobile-app&#10;eas login&#10;```&#10;&#10;## Step 3: Build Dev Client&#10;**Status:** Pending&#10;```bash&#10;eas build --profile development --platform android&#10;```&#10;&#10;## Step 4: Install APK&#10;**Status:** Pending&#10;```bash&#10;adb install [downloaded-apk-path].apk&#10;```&#10;&#10;## Step 5: Test&#10;**Status:** Pending&#10;Press `a` in expo start.&#10;&#10;**Notes:**&#10;- react-native-webrtc needs event-target-shim&#10;- Dev client APK required for custom native modules&#10;- Reply "bundling fixed" or terminal output after Step 0.

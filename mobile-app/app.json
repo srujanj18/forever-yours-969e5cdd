@@ -6,21 +6,50 @@
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "scheme": "togetherly",
-    "platforms": ["ios", "android", "web"],
-    "assetBundlePatterns": ["**/*"],
+    "platforms": [
+      "ios",
+      "android",
+      "web"
+    ],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "Togetherly uses your camera for video calls.",
+        "NSMicrophoneUsageDescription": "Togetherly uses your microphone for calls and voice notes."
+      }
     },
-    "android": {},
+    "android": {
+      "package": "com.srujan0610.togetherly",
+      "permissions": [
+        "CAMERA",
+        "RECORD_AUDIO"
+      ]
+    },
     "web": {
       "themeColor": "#2563EB",
       "backgroundColor": "#F4F7FB"
     },
     "plugins": [
-      "expo-router"
+      "expo-router",
+      "expo-dev-client",
+      [
+        "@config-plugins/react-native-webrtc",
+        {
+          "cameraPermission": "Togetherly uses your camera for video calls.",
+          "microphonePermission": "Togetherly uses your microphone for calls and voice notes."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "eas": {
+        "projectId": "1dac9654-014a-49da-af65-0bdfb9a78be8"
+      }
     }
   }
 }
