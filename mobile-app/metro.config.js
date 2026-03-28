@@ -22,4 +22,20 @@ config.resolver.extraNodeModules = {
   'react-native-svg': path.resolve(appNodeModules, 'react-native-svg'),
 };
 
+config.resolver.resolveRequest = (context, moduleName, platform) => {
+  if (
+    moduleName.startsWith('event-target-shim') &&
+    context.originModulePath.includes('react-native-webrtc')
+  ) {
+    return {
+      filePath: require.resolve(moduleName, {
+        paths: [path.dirname(context.originModulePath)],
+      }),
+      type: 'sourceFile',
+    };
+  }
+
+  return context.resolveRequest(context, moduleName, platform);
+};
+
 module.exports = config;
