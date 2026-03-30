@@ -3,6 +3,7 @@
     "name": "Togetherly",
     "slug": "togetherly",
     "version": "1.0.0",
+    "newArchEnabled": false,
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "scheme": "togetherly",

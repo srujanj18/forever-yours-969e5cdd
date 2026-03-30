@@ -6,7 +6,6 @@ import { Grid3X3, Mic, MicOff, Minimize2, Move, Phone, PhoneOff, Plus, RefreshCc
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, PanResponder, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { MediaStream, RTCIceCandidate, RTCPeerConnection, RTCSessionDescription, RTCView, mediaDevices } from 'react-native-webrtc';
 import { AppButton, AppShell, Card, EmptyState, SectionTitle, theme } from '../components/app-ui';
 import { useAppState } from '../lib/app-state';
 
@@ -22,6 +21,15 @@ const ICE_SERVERS = [
     ? [{ urls: TURN_URLS, username: process.env.EXPO_PUBLIC_TURN_USERNAME, credential: process.env.EXPO_PUBLIC_TURN_CREDENTIAL }]
     : []),
 ];
+
+let cachedWebRTC: any | null = null;
+
+function getWebRTC() {
+  if (!cachedWebRTC) {
+    cachedWebRTC = require('react-native-webrtc');
+  }
+  return cachedWebRTC;
+}
 
 async function applyCallAudioMode(callType: CallType) {
   await Audio.setIsEnabledAsync(true);
@@ -67,15 +75,17 @@ export function CallScreen({ screenType = 'video' }: CallScreenProps) {
   const { width, height } = useWindowDimensions();
   const [videoEnabled, setVideoEnabled] = useState(true);
   const [audioEnabled, setAudioEnabled] = useState(true);
-  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
-  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+  const [localStream, setLocalStream] = useState<any | null>(null);
+  const [remoteStream, setRemoteStream] = useState<any | null>(null);
   const [callStatus, setCallStatus] = useState('Ready to call');
   const [elapsed, setElapsed] = useState(0);
   const [previewSize, setPreviewSize] = useState({ width: 96, height: 148 });
   const [previewPosition, setPreviewPosition] = useState({ x: Math.max(12, width - 108), y: Math.max(96, height - 268) });
+  const [RTCViewComponent, setRTCViewComponent] = useState<any>(() => View);
+  const [webRTCBroken, setWebRTCBroken] = useState(false);
 
-  const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
-  const localStreamRef = useRef<MediaStream | null>(null);
+  const peerConnectionRef = useRef<any | null>(null);
+  const localStreamRef = useRef<any | null>(null);
   const pendingIceRef = useRef<any[]>([]);
   const pendingAnswerRef = useRef<any | null>(null);
   const offerCreatedRef = useRef(false);
@@ -93,6 +103,19 @@ export function CallScreen({ screenType = 'video' }: CallScreenProps) {
   const callPartnerId = incomingCall?.fromUserId || partner?._id || null;
   const isIncoming = !!incomingCall && !activeCallType;
   const isVideo = screenType === 'video';
+
+  const ensureWebRTCModule = () => {
+    try {
+      const module = getWebRTC();
+      setRTCViewComponent(() => module.RTCView || View);
+      setWebRTCBroken(false);
+      return module;
+    } catch (error) {
+      setRTCViewComponent(() => View);
+      setWebRTCBroken(true);
+      throw error;
+    }
+  };
 
   const clampPreview = (x: number, y: number) => ({
     x: Math.min(Math.max(12, x), Math.max(12, width - previewSize.width - 12)),
@@ -159,6 +182,7 @@ export function CallScreen({ screenType = 'video' }: CallScreenProps) {
   const ensurePeer = (toUserId: string, nextCallType: CallType) => {
     if (peerConnectionRef.current) return peerConnectionRef.current;
     callTypeRef.current = nextCallType;
+    const { RTCPeerConnection } = ensureWebRTCModule();
     const peer = new RTCPeerConnection({ iceServers: ICE_SERVERS, iceCandidatePoolSize: 10 });
     const eventfulPeer = peer as RTCPeerConnection & {
       addEventListener: (type: string, listener: (event: any) => void) => void;
@@ -190,6 +214,7 @@ export function CallScreen({ screenType = 'video' }: CallScreenProps) {
     const existing = localStreamRef.current;
     if (existing && (nextCallType === 'voice' || existing.getVideoTracks().length)) return existing;
     existing?.getTracks().forEach((track) => track.stop());
+    const { mediaDevices } = ensureWebRTCModule();
     const stream = await mediaDevices.getUserMedia({
       audio: true,
       video: nextCallType === 'video' ? { facingMode: 'user', frameRate: 24, width: 720, height: 1280 } : false,
@@ -206,7 +231,12 @@ export function CallScreen({ screenType = 'video' }: CallScreenProps) {
     const queued = [...pendingIceRef.current];
     pendingIceRef.current = [];
     for (const candidate of queued) {
-      try { await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate)); } catch { pendingIceRef.current.push(candidate); }
+      try {
+        const { RTCIceCandidate } = ensureWebRTCModule();
+        await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch {
+        pendingIceRef.current.push(candidate);
+      }
     }
   };
 
@@ -219,9 +249,8 @@ export function CallScreen({ screenType = 'video' }: CallScreenProps) {
       return false;
     }
 
-    await peerConnectionRef.current.setRemoteDescription(
-      new RTCSessionDescription(pendingAnswerRef.current)
-    );
+    const { RTCSessionDescription } = ensureWebRTCModule();
+    await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(pendingAnswerRef.current));
     pendingAnswerRef.current = null;
     await flushPendingIce();
     setCallStatus(callTypeRef.current === 'video' ? 'Video call connected' : 'Voice call connected');
@@ -262,6 +291,12 @@ export function CallScreen({ screenType = 'video' }: CallScreenProps) {
     }
     void applyCallAudioMode(callType).catch(() => undefined);
   }, [activeCallType, incomingCall, callType]);
+
+  useEffect(() => {
+    if (webRTCBroken) {
+      setCallStatus('Update the Android dev build to use calling');
+    }
+  }, [webRTCBroken]);
 
   useEffect(() => {
     if (!activeCallType) return;
@@ -321,6 +356,7 @@ export function CallScreen({ screenType = 'video' }: CallScreenProps) {
         }
         const stream = await attachLocalTracks(nextCallType);
         if (!peer.getSenders().length) stream.getTracks().forEach((track) => peer.addTrack(track, stream));
+        const { RTCSessionDescription } = ensureWebRTCModule();
         await peer.setRemoteDescription(new RTCSessionDescription(latestOfferSignal.offer));
         await flushPendingIce();
         const answer = await peer.createAnswer();
@@ -362,6 +398,7 @@ export function CallScreen({ screenType = 'video' }: CallScreenProps) {
           return;
         }
 
+        const { RTCSessionDescription } = ensureWebRTCModule();
         await peer.setRemoteDescription(new RTCSessionDescription(latestAnswerSignal.answer));
         pendingAnswerRef.current = null;
         handledAnswerRef.current = latestAnswerSignal.signalId;
@@ -386,7 +423,10 @@ export function CallScreen({ screenType = 'video' }: CallScreenProps) {
       pendingIceRef.current.push(latestIceCandidateSignal.candidate);
       return;
     }
-    void peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(latestIceCandidateSignal.candidate)).catch(() => pendingIceRef.current.push(latestIceCandidateSignal.candidate));
+    void (() => {
+      const { RTCIceCandidate } = ensureWebRTCModule();
+      return peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(latestIceCandidateSignal.candidate));
+    })().catch(() => pendingIceRef.current.push(latestIceCandidateSignal.candidate));
   }, [callPartnerId, latestIceCandidateSignal]);
 
   useEffect(() => () => {
@@ -430,6 +470,7 @@ export function CallScreen({ screenType = 'video' }: CallScreenProps) {
       if (!peer.getSenders().length) {
         stream.getTracks().forEach((track) => peer.addTrack(track, stream));
       }
+      const { RTCSessionDescription } = ensureWebRTCModule();
       await peer.setRemoteDescription(new RTCSessionDescription(incomingCall.offer));
       await flushPendingIce();
       const answer = await peer.createAnswer();
@@ -454,14 +495,14 @@ export function CallScreen({ screenType = 'video' }: CallScreenProps) {
         <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
           <StatusBar style="light" />
           <View style={styles.stage}>
-            {remoteStream ? <RTCView streamURL={remoteStream.toURL()} style={StyleSheet.absoluteFillObject} objectFit="cover" /> : <View style={styles.remoteFallback}><View style={styles.remoteFallbackBadge}><UserRound size={78} color="#c7d2fe" /></View><Text style={styles.name}>{headerName}</Text><Text style={styles.status}>{statusText}</Text></View>}
+            {remoteStream ? <RTCViewComponent streamURL={remoteStream.toURL()} style={StyleSheet.absoluteFillObject} objectFit="cover" /> : <View style={styles.remoteFallback}><View style={styles.remoteFallbackBadge}><UserRound size={78} color="#c7d2fe" /></View><Text style={styles.name}>{headerName}</Text><Text style={styles.status}>{statusText}</Text></View>}
             <View style={styles.overlay} />
             <View style={styles.topBar}>
               <Pressable onPress={() => router.back()} style={({ pressed }) => [styles.backChip, pressed && styles.pressed]}><Minimize2 size={16} color="#fff" /><Text style={styles.backChipText}>Back</Text></Pressable>
               <View style={styles.topText}><Text style={styles.topName}>{headerName}</Text><Text style={styles.topStatus}>{statusText}</Text></View>
             </View>
             <View {...previewPanResponder.panHandlers} style={[styles.preview, { width: previewSize.width, height: previewSize.height, left: previewPosition.x, top: previewPosition.y }]}>
-              {videoEnabled && localStream ? <RTCView streamURL={localStream.toURL()} style={StyleSheet.absoluteFillObject} objectFit="cover" mirror /> : <View style={styles.previewFallback}><UserRound size={30} color="#fff" /><Text style={styles.previewText}>{videoEnabled ? 'Starting camera...' : 'Camera off'}</Text></View>}
+              {videoEnabled && localStream ? <RTCViewComponent streamURL={localStream.toURL()} style={StyleSheet.absoluteFillObject} objectFit="cover" mirror /> : <View style={styles.previewFallback}><UserRound size={30} color="#fff" /><Text style={styles.previewText}>{videoEnabled ? 'Starting camera...' : 'Camera off'}</Text></View>}
               <View style={styles.previewBar}>
                 <View style={styles.previewIdentity}>
                   <Move size={13} color="#fff" />
@@ -501,6 +542,7 @@ export function CallScreen({ screenType = 'video' }: CallScreenProps) {
           <Text style={{ fontSize: 24, fontWeight: '800', color: '#fff' }}>Real-time calling</Text>
           <Text style={{ color: '#dbe7f5', lineHeight: 20 }}>Voice and video calls work app-to-app through WebRTC media streams.</Text>
           <Text style={{ color: '#cbd5e1', lineHeight: 20, fontSize: 13 }}>For global reliability, configure TURN credentials in `mobile-app/.env`. Calling actual phone numbers needs a telephony provider and is not implemented in this repo.</Text>
+          {webRTCBroken ? <Text style={{ color: '#fcd34d', lineHeight: 20, fontSize: 13 }}>This installed Android dev client is not compatible with the current WebRTC native module. Rebuild and reinstall the development APK, then relaunch the app.</Text> : null}
           <View style={{ gap: 12 }}>
             <AppButton title="Start Voice Call" variant="secondary" onPress={() => startCall('voice')} leftIcon={<Phone size={16} color={theme.rose} />} />
             <AppButton title="Start Video Call" onPress={() => startCall('video')} leftIcon={<Video size={16} color="#fff" />} />

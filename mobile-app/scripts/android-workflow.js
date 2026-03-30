@@ -7,7 +7,27 @@ const localAndroidHome = path.join(projectRoot, ".android-home");
 const localUserHome = path.join(projectRoot, ".android-user-home");
 const localDrive = path.parse(localUserHome).root.replace(/[\\\/]+$/, "");
 const localHomePath = localUserHome.slice(localDrive.length) || "\\";
-const apkPath = path.join(projectRoot, "togetherly-latest.apk");
+const preferredApkPath = path.join(projectRoot, "togetherly-latest.apk");
+const debugApkPath = path.join(
+  projectRoot,
+  "android",
+  "app",
+  "build",
+  "outputs",
+  "apk",
+  "debug",
+  "app-debug.apk"
+);
+const releaseApkPath = path.join(
+  projectRoot,
+  "android",
+  "app",
+  "build",
+  "outputs",
+  "apk",
+  "release",
+  "app-release.apk"
+);
 const appId = "com.srujan0610.togetherly";
 const adbExe = process.platform === "win32" ? "adb.exe" : "adb";
 
@@ -44,13 +64,31 @@ function run(command, args, extraEnv = {}) {
   });
 }
 
+function resolveApkPath() {
+  const envApkPath = process.env.APK_PATH;
+  const candidates = [
+    envApkPath ? path.resolve(projectRoot, envApkPath) : null,
+    preferredApkPath,
+    debugApkPath,
+    releaseApkPath,
+  ].filter(Boolean);
+
+  return candidates.find((candidate) => fs.existsSync(candidate));
+}
+
 async function installApk() {
-  if (!fs.existsSync(apkPath)) {
+  const apkPath = resolveApkPath();
+  if (!apkPath) {
     throw new Error(
-      `APK not found at ${apkPath}. Build or copy the latest development APK first.`
+      `APK not found. Checked:\n` +
+      `- ${preferredApkPath}\n` +
+      `- ${debugApkPath}\n` +
+      `- ${releaseApkPath}\n` +
+      `You can also set APK_PATH to a custom APK location.`
     );
   }
 
+  console.log(`Installing APK from: ${apkPath}`);
   await run(adbExe, ["install", "-r", apkPath]);
 }
 

@@ -32,7 +32,7 @@ npm run android:launch
 
 ## When you need to redeploy
 
-Use this after replacing `togetherly-latest.apk` with a newer build:
+Use this after replacing `togetherly-latest.apk` with a newer build, or after generating a local APK at `android/app/build/outputs/apk/...`:
 
 ```bash
 npm run android:redeploy
@@ -48,10 +48,17 @@ You only need a new APK when a native change happens, for example:
 - new native library or Expo plugin changes
 - Android package/config updates
 
-Build a fresh development client APK, place it at `mobile-app/togetherly-latest.apk`, then run:
+Build a fresh development client APK, place it at `mobile-app/togetherly-latest.apk`, or point the script at a custom file with `APK_PATH`, then run:
 
 ```bash
 npm run android:redeploy
+```
+
+Examples:
+
+```bash
+set APK_PATH=C:\path\to\your\app-debug.apk
+npm run android:install-custom-apk
 ```
 
 ## Notes

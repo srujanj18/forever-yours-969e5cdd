@@ -1,5 +1,6 @@
 import type { ImagePickerAsset } from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system/legacy';
+import * as ImageManipulator from 'expo-image-manipulator';
 import { router } from 'expo-router';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
@@ -126,27 +127,57 @@ type AppStateValue = {
 
 const AppStateContext = createContext<AppStateValue | null>(null);
 
-async function buildFileFormData(fieldName: string, asset: UploadAsset, extra?: Record<string, string>) {
-  const formData = new FormData();
+async function optimizeUploadAsset(asset: UploadAsset): Promise<UploadAsset> {
   const normalizedType = asset.type || (asset.mimeType?.startsWith('video') ? 'video' : asset.mimeType?.startsWith('audio') ? 'audio' : 'image');
+  if (Platform.OS === 'web' || normalizedType !== 'image' || !asset.uri) {
+    return asset;
+  }
+
+  try {
+    const result = await ImageManipulator.manipulateAsync(
+      asset.uri,
+      [{ resize: { width: 1600 } }],
+      {
+        compress: 0.72,
+        format: ImageManipulator.SaveFormat.JPEG,
+      }
+    );
+
+    const originalName = asset.fileName?.replace(/\.\w+$/, '') || `image-${Date.now()}`;
+    return {
+      ...asset,
+      uri: result.uri,
+      fileName: `${originalName}.jpg`,
+      mimeType: 'image/jpeg',
+      type: 'image',
+    };
+  } catch {
+    return asset;
+  }
+}
+
+async function buildFileFormData(fieldName: string, asset: UploadAsset, extra?: Record<string, string>) {
+  const preparedAsset = await optimizeUploadAsset(asset);
+  const formData = new FormData();
+  const normalizedType = preparedAsset.type || (preparedAsset.mimeType?.startsWith('video') ? 'video' : preparedAsset.mimeType?.startsWith('audio') ? 'audio' : 'image');
   const mimeType =
-    asset.mimeType ||
+    preparedAsset.mimeType ||
     (normalizedType === 'video' ? 'video/mp4' : normalizedType === 'audio' ? 'audio/m4a' : 'image/jpeg');
   const inferredExtension =
-    asset.fileName?.split('.').pop()?.trim().toLowerCase() ||
+    preparedAsset.fileName?.split('.').pop()?.trim().toLowerCase() ||
     MIME_TYPE_TO_EXTENSION[mimeType] ||
     (normalizedType === 'video' ? 'mp4' : normalizedType === 'audio' ? 'm4a' : 'jpg');
   const baseFileName =
-    asset.fileName?.trim().replace(/[^\w.-]/g, '_') ||
+    preparedAsset.fileName?.trim().replace(/[^\w.-]/g, '_') ||
     `${fieldName}-${Date.now()}.${inferredExtension}`;
   const fileName = /\.[A-Za-z0-9]+$/.test(baseFileName) ? baseFileName : `${baseFileName}.${inferredExtension}`;
 
   if (Platform.OS === 'web') {
-    const fileResponse = await fetch(asset.uri);
+    const fileResponse = await fetch(preparedAsset.uri);
     const blob = await fileResponse.blob();
     formData.append(fieldName, blob, fileName);
   } else {
-    let uploadUri = asset.uri;
+    let uploadUri = preparedAsset.uri;
 
     if (!uploadUri.startsWith('file://') && !uploadUri.startsWith('/')) {
       const cacheRoot = FileSystem.cacheDirectory || FileSystem.documentDirectory;
@@ -564,9 +595,9 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
           messageType: isVideoAttachment ? 'video' : 'image',
           replyTo,
         });
-        setMessages((prev) => [...prev, response]);
+        upsertMessage(response);
         if (!media.mediaType?.startsWith('audio/')) {
-          setGallery((prev) => [media, ...prev]);
+          setGallery((prev) => (prev.some((item) => item._id === media._id) ? prev : [media, ...prev]));
         }
       },
       sendVoiceMessage: async (asset, replyTo) => {
