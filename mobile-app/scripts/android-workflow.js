@@ -30,6 +30,9 @@ const releaseApkPath = path.join(
 );
 const appId = "com.srujan0610.togetherly";
 const adbExe = process.platform === "win32" ? "adb.exe" : "adb";
+const windowsCmdExe =
+  process.env.ComSpec ||
+  (process.env.SystemRoot ? path.join(process.env.SystemRoot, "System32", "cmd.exe") : "C:\\Windows\\System32\\cmd.exe");
 
 fs.mkdirSync(localAndroidHome, { recursive: true });
 fs.mkdirSync(localUserHome, { recursive: true });
@@ -105,6 +108,11 @@ async function launchApp() {
 }
 
 async function startMetro() {
+  if (process.platform === "win32") {
+    await run(windowsCmdExe, ["/c", "npx", "expo", "start", "--dev-client", "--clear"]);
+    return;
+  }
+
   await run("npx", ["expo", "start", "--dev-client", "--clear"]);
 }
 

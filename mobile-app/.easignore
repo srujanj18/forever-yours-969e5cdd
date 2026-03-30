@@ -1,0 +1,7 @@
+.android-home/
+.android-user-home/
+.expo/
+.idea/
+node_modules/
+togetherly-latest.apk
+*.log
