@@ -2,6 +2,7 @@ import express, { Request } from 'express';
 import { getMedia, uploadMedia, deleteMedia } from '../controllers/gallery';
 import { protect } from '../middleware/auth';
 import multer, { StorageEngine } from 'multer';
+import fs from 'fs';
 import path from 'path';
 
 const router = express.Router();
@@ -10,6 +11,9 @@ const router = express.Router();
 const storage: StorageEngine = multer.diskStorage({
   destination: (req: Request, file: Express.Multer.File, cb: (error: Error | null, destination: string) => void) => {
     const uploadDir = path.join(process.cwd(), 'public', 'uploads');
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
     cb(null, uploadDir);
   },
   filename: (req: Request, file: Express.Multer.File, cb: (error: Error | null, filename: string) => void) => {

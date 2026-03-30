@@ -37,6 +37,10 @@ async function uploadFileToFirebaseStorage(localFilePath: string, fileName: stri
   throw lastError || new Error('No Firebase Storage bucket is configured.');
 }
 
+function toPublicUploadsUrl(fileName: string) {
+  return `/uploads/${fileName}`;
+}
+
 // @desc    Get all media for partners
 // @route   GET /api/gallery
 // @access  Private
@@ -78,8 +82,15 @@ export const uploadMedia = async (req: AuthRequest, res: Response) => {
     }
 
     const { caption } = req.body;
-    const localFilePath = path.join(process.cwd(), 'public', 'uploads', req.file.filename);
-    const mediaUrl = await uploadFileToFirebaseStorage(localFilePath, req.file.filename, req.file.mimetype);
+    const localFilePath = req.file.path || path.join(process.cwd(), 'public', 'uploads', req.file.filename);
+    let mediaUrl: string;
+    try {
+      mediaUrl = await uploadFileToFirebaseStorage(localFilePath, req.file.filename, req.file.mimetype);
+    } catch (storageError: any) {
+      // Keep chat media functional even when Firebase Storage credentials are invalid.
+      console.error('Firebase upload failed, falling back to local file hosting:', storageError?.message || storageError);
+      mediaUrl = toPublicUploadsUrl(req.file.filename);
+    }
 
     const media = new Media({
       senderId: user._id,
@@ -90,7 +101,7 @@ export const uploadMedia = async (req: AuthRequest, res: Response) => {
     });
 
     await media.save();
-    if (fs.existsSync(localFilePath)) {
+    if (!mediaUrl.startsWith('/uploads/') && fs.existsSync(localFilePath)) {
       fs.unlinkSync(localFilePath);
     }
 
