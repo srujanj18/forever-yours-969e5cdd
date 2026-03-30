@@ -4,7 +4,7 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import { router } from 'expo-router';
 import { ArrowLeft, CalendarDays, ChevronDown, Copy, Image as ImageIcon, Link2, Mic, Pause, Pencil, Phone, Play, Reply, RotateCcw, Search, Send, Square, Trash2, Users, Video } from 'lucide-react-native';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Animated, AppState, Image, Linking, Modal, PanResponder, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { Alert, Animated, AppState, Image, Linking, Modal, PanResponder, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { AppButton, AppShell, AvatarBadge, Card, EmptyState, FormModal, IconButton, ProfileShortcut, theme } from '../components/app-ui';
 import { resolveAssetUrl } from '../lib/api';
 import { useAppState } from '../lib/app-state';
@@ -121,6 +121,7 @@ type PendingMedia = {
   mimeType?: string | null;
   fileName?: string | null;
   originalUri: string;
+  revokeUriOnClose?: boolean;
 };
 
 function MenuRow({
@@ -226,7 +227,12 @@ export default function ChatScreen() {
   };
 
   const closePendingMedia = () => {
-    setPendingMedia(null);
+    setPendingMedia((current) => {
+      if (current?.revokeUriOnClose && current.uri.startsWith('blob:') && typeof URL !== 'undefined') {
+        URL.revokeObjectURL(current.uri);
+      }
+      return null;
+    });
     setPendingMediaCaption('');
     setIsSendingPendingMedia(false);
   };
@@ -283,7 +289,7 @@ export default function ChatScreen() {
   const openCallScreen = (type: 'voice' | 'video') => {
     startCall(type);
     setIsCallMenuVisible(false);
-    router.push('/video' as never);
+    router.push((type === 'voice' ? '/voice' : '/video') as never);
   };
 
   const applyImageEdit = async (action: 'rotate' | 'flip' | 'reset') => {
@@ -452,6 +458,39 @@ export default function ChatScreen() {
   };
 
   const pickAndSendMedia = async () => {
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*,video/*';
+
+      input.onchange = () => {
+        const file = input.files?.[0];
+        if (!file) return;
+
+        const objectUrl = URL.createObjectURL(file);
+        const kind = file.type.startsWith('video/') ? 'video' : 'image';
+
+        setPendingMedia((current) => {
+          if (current?.revokeUriOnClose && current.uri.startsWith('blob:')) {
+            URL.revokeObjectURL(current.uri);
+          }
+
+          return {
+            uri: objectUrl,
+            originalUri: objectUrl,
+            type: kind,
+            mimeType: file.type || (kind === 'video' ? 'video/mp4' : 'image/jpeg'),
+            fileName: file.name,
+            revokeUriOnClose: true,
+          };
+        });
+        setPendingMediaCaption(draft.trim());
+      };
+
+      input.click();
+      return;
+    }
+
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
       Alert.alert('Media access needed', 'Allow photo library access to send media in chat.');
@@ -474,6 +513,7 @@ export default function ChatScreen() {
       type: kind,
       mimeType: asset.mimeType,
       fileName: asset.fileName,
+      revokeUriOnClose: false,
     });
     setPendingMediaCaption(draft.trim());
   };

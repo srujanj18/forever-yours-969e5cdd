@@ -1,1 +1,61 @@
-# Expo Android Fix - Updated for Bundling Error&#10;&#10;## 0: Fix Bundling Error (event-target-shim missing)&#10;**Status:** ⏳ Pending**&#10;```bash&#10;cd mobile-app&#10;npm install event-target-shim&#10;npx expo install --fix&#10;npx expo start --clear  # Test bundling succeeds&#10;```&#10;Expected: No "Unable to resolve event-target-shim" error.&#10;&#10;## Step 1: Emulator&#10;**Status:** ✅ Running (Pixel_6a)&#10;&#10;## Step 2: EAS Login&#10;**Status:** Pending&#10;```bash&#10;cd mobile-app&#10;eas login&#10;```&#10;&#10;## Step 3: Build Dev Client&#10;**Status:** Pending&#10;```bash&#10;eas build --profile development --platform android&#10;```&#10;&#10;## Step 4: Install APK&#10;**Status:** Pending&#10;```bash&#10;adb install [downloaded-apk-path].apk&#10;```&#10;&#10;## Step 5: Test&#10;**Status:** Pending&#10;Press `a` in expo start.&#10;&#10;**Notes:**&#10;- react-native-webrtc needs event-target-shim&#10;- Dev client APK required for custom native modules&#10;- Reply "bundling fixed" or terminal output after Step 0.
+# Android Studio Verification Loop
+
+## One-time setup
+
+1. Open Android Studio.
+2. Start your emulator from Device Manager.
+3. In `mobile-app`, install the current dev APK:
+
+```bash
+npm run android:install-apk
+```
+
+4. Start Metro for the dev client:
+
+```bash
+npm run android:dev
+```
+
+5. Launch the app on the emulator:
+
+```bash
+npm run android:launch
+```
+
+## Daily edit/test flow
+
+1. Keep Android Studio's emulator running.
+2. Keep `npm run android:dev` running in a terminal.
+3. Make app changes.
+4. Verify the change in the emulator.
+5. Reload the app from the dev menu or press `r` in the Metro terminal when needed.
+
+## When you need to redeploy
+
+Use this after replacing `togetherly-latest.apk` with a newer build:
+
+```bash
+npm run android:redeploy
+```
+
+This reinstalls the APK on the emulator and launches the app again.
+
+## When a full rebuild is required
+
+You only need a new APK when a native change happens, for example:
+
+- `app.json` plugin or permission changes
+- new native library or Expo plugin changes
+- Android package/config updates
+
+Build a fresh development client APK, place it at `mobile-app/togetherly-latest.apk`, then run:
+
+```bash
+npm run android:redeploy
+```
+
+## Notes
+
+- The scripts use a repo-local `.android-home/` folder so `adb` works reliably on this machine.
+- JavaScript, styling, and most screen-level changes do not need a new APK.
+- Expo `prebuild` is currently failing on this Windows setup with `spawn EPERM`, so for now Android Studio is best used as the emulator/verification target while the dev client handles reloads.

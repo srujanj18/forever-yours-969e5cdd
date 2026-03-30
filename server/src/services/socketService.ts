@@ -3,220 +3,256 @@ import { Server as HTTPServer } from 'http';
 import User from '../models/user';
 import CallHistory from '../models/callHistory';
 
-// Store active users and their socket IDs
-export const activeUsers = new Map<string, string>(); // userId -> socketId
-const userConnectionCount = new Map<string, number>(); // userId -> connection count
-const callInProgress = new Map<string, string>(); // userId -> partnerId
-const typingUsers = new Map<string, string>(); // userId -> partnerId (who they're typing to)
+type CallType = 'voice' | 'video';
+
+type ActiveCallSession = {
+  callId: string;
+  callerId: string;
+  receiverId: string;
+  callType: CallType;
+  startedAt: Date;
+  acceptedAt?: Date;
+  offerSent?: boolean;
+  answerSent?: boolean;
+};
+
+export const activeUsers = new Map<string, string>();
+const userSockets = new Map<string, Set<string>>();
+const socketToUser = new Map<string, string>();
+const callSessions = new Map<string, ActiveCallSession>();
+const typingUsers = new Map<string, string>();
 
 let io: SocketIOServer;
+
+function getUserRoom(userId: string) {
+  return `user-${userId}`;
+}
+
+function getSessionKey(userA: string, userB: string) {
+  return [userA, userB].sort().join(':');
+}
+
+function emitToUser(userId: string, event: string, payload: unknown) {
+  io.to(getUserRoom(userId)).emit(event, payload);
+}
+
+function isUserOnline(userId: string) {
+  return (userSockets.get(userId)?.size || 0) > 0;
+}
+
+function getUserIdBySocket(socketId: string) {
+  return socketToUser.get(socketId) || '';
+}
+
+function registerSocketForUser(userId: string, socketId: string) {
+  const sockets = userSockets.get(userId) || new Set<string>();
+  sockets.add(socketId);
+  userSockets.set(userId, sockets);
+  socketToUser.set(socketId, userId);
+  activeUsers.set(userId, socketId);
+}
+
+function unregisterSocket(socketId: string) {
+  const userId = socketToUser.get(socketId);
+  if (!userId) return '';
+
+  socketToUser.delete(socketId);
+  const sockets = userSockets.get(userId);
+  if (!sockets) return userId;
+
+  sockets.delete(socketId);
+  if (sockets.size === 0) {
+    userSockets.delete(userId);
+    activeUsers.delete(userId);
+  } else {
+    activeUsers.set(userId, Array.from(sockets)[sockets.size - 1]);
+  }
+
+  return userId;
+}
+
+async function finalizeCall(session: ActiveCallSession, status: 'completed' | 'missed' | 'rejected') {
+  const call = await CallHistory.findById(session.callId);
+  if (!call || call.endedAt) return;
+
+  call.endedAt = new Date();
+  call.status = status;
+  call.duration =
+    status === 'completed'
+      ? Math.max(0, Math.floor((call.endedAt.getTime() - (session.acceptedAt || session.startedAt).getTime()) / 1000))
+      : 0;
+
+  await call.save();
+}
 
 export const initializeSocket = (httpServer: HTTPServer) => {
   io = new SocketIOServer(httpServer, {
     cors: {
       origin: [
         process.env.CLIENT_URL || 'http://localhost:5173',
-        'http://localhost:5174', // Vite dev server
-        /^https:\/\/.*\.vercel\.app$/, // Vercel deployments
+        'http://localhost:5174',
+        /^https:\/\/.*\.vercel\.app$/,
       ],
       credentials: true,
     },
   });
 
   io.on('connection', (socket: Socket) => {
-    console.log(`✅ User connected: ${socket.id}`);
+    console.log(`User connected: ${socket.id}`);
 
-    // Register user
     socket.on('register-user', async (userId: string) => {
       try {
-        // Track connection count
-        const currentCount = userConnectionCount.get(userId) || 0;
-        userConnectionCount.set(userId, currentCount + 1);
+        registerSocketForUser(userId, socket.id);
+        socket.join(getUserRoom(userId));
 
-        activeUsers.set(userId, socket.id);
-        socket.join(`user-${userId}`);
-        console.log(`👤 User ${userId} registered with socket ${socket.id} (connection count: ${userConnectionCount.get(userId)})`);
+        const connectionCount = userSockets.get(userId)?.size || 0;
+        console.log(`User ${userId} registered on socket ${socket.id} (${connectionCount} connections)`);
 
-        // Notify partner if they're online
         const user = await User.findById(userId).select('partnerId');
-        if (user?.partnerId) {
-          const partnerId = user.partnerId.toString();
-          const partnerSocketId = activeUsers.get(partnerId);
+        if (!user?.partnerId) return;
 
-          // Notify partner that this user is online
-          if (partnerSocketId) {
-            io.to(partnerSocketId).emit('partner-online', { userId });
-            console.log(`📡 Notified partner ${partnerId} that user ${userId} is online`);
-          }
+        const partnerId = user.partnerId.toString();
 
-          // Also notify this user if their partner is online
-          if (activeUsers.has(partnerId)) {
-            io.to(socket.id).emit('partner-online', { userId: partnerId });
-            console.log(`📡 Notified user ${userId} that partner ${partnerId} is online`);
-          } else {
-            // If partner is not online, explicitly notify that they're offline
-            io.to(socket.id).emit('partner-offline', { userId: partnerId });
-            console.log(`📡 Notified user ${userId} that partner ${partnerId} is offline`);
-          }
+        if (isUserOnline(partnerId)) {
+          emitToUser(partnerId, 'partner-online', { userId });
+          emitToUser(userId, 'partner-online', { userId: partnerId });
+        } else {
+          emitToUser(userId, 'partner-offline', { userId: partnerId });
         }
       } catch (error) {
         console.error('Error registering user:', error);
       }
     });
 
-    // Initiate call (video or voice)
-    socket.on('initiate-call', async (data: { fromUserId: string; toUserId: string; offer: any; callType?: 'voice' | 'video' }) => {
+    socket.on('initiate-call', async (data: { fromUserId: string; toUserId: string; offer: any; callType?: CallType }) => {
       try {
-        const toUserSocketId = activeUsers.get(data.toUserId);
-
-        if (!toUserSocketId) {
+        if (!isUserOnline(data.toUserId)) {
           socket.emit('call-error', { message: 'User is offline' });
           return;
         }
 
-        // Check if partner is already in a call
-        if (callInProgress.has(data.toUserId)) {
+        const sessionKey = getSessionKey(data.fromUserId, data.toUserId);
+        if (callSessions.has(sessionKey)) {
           socket.emit('call-error', { message: 'User is already on a call' });
           return;
         }
 
-        const fromUser = await User.findById(data.fromUserId).select('displayName email');
-
-        // Create call history entry
-        const callHistory = new CallHistory({
+        const fromUser = await User.findById(data.fromUserId).select('displayName');
+        const callHistory = await CallHistory.create({
           callerId: data.fromUserId,
           receiverId: data.toUserId,
           callType: data.callType || 'video',
           startedAt: new Date(),
+          status: 'missed',
         });
-        await callHistory.save();
 
-        // Send call notification to the other user
-        io.to(toUserSocketId).emit('incoming-call', {
+        const session: ActiveCallSession = {
+          callId: String(callHistory._id),
+          callerId: data.fromUserId,
+          receiverId: data.toUserId,
+          callType: data.callType || 'video',
+          startedAt: callHistory.startedAt,
+          offerSent: Boolean(data.offer),
+          answerSent: false,
+        };
+
+        callSessions.set(sessionKey, session);
+
+        emitToUser(data.toUserId, 'incoming-call', {
           fromUserId: data.fromUserId,
           fromUserName: fromUser?.displayName,
           offer: data.offer,
-          callType: data.callType || 'video', // Default to video for backward compatibility
-          callId: callHistory._id, // Include call ID for tracking
+          callType: session.callType,
+          callId: session.callId,
         });
 
-        // Mark call as in progress
-        callInProgress.set(data.fromUserId, data.toUserId);
-        callInProgress.set(data.toUserId, data.fromUserId);
-
-        socket.emit('call-initiated', { status: 'waiting', callId: callHistory._id });
-        console.log(`📞 ${data.callType || 'video'} call initiated from ${data.fromUserId} to ${data.toUserId}`);
+        emitToUser(data.fromUserId, 'call-initiated', {
+          status: 'waiting',
+          callId: session.callId,
+          callType: session.callType,
+        });
       } catch (error) {
         console.error('Error initiating call:', error);
         socket.emit('call-error', { message: 'Failed to initiate call' });
       }
     });
 
-    // Accept call
     socket.on('accept-call', async (data: { fromUserId: string; toUserId: string; answer: any }) => {
       try {
-        const toUserSocketId = activeUsers.get(data.fromUserId);
-        
-        if (!toUserSocketId) {
-          socket.emit('call-error', { message: 'Caller is offline' });
+        const session = callSessions.get(getSessionKey(data.fromUserId, data.toUserId));
+        if (!session) {
+          socket.emit('call-error', { message: 'Call session expired' });
           return;
         }
 
-        // Notify the caller that call was accepted
-        io.to(toUserSocketId).emit('call-accepted', {
+        session.acceptedAt = new Date();
+        session.answerSent = Boolean(data.answer);
+
+        emitToUser(data.fromUserId, 'call-accepted', {
           answer: data.answer,
           acceptedByUserId: data.toUserId,
+          callId: session.callId,
+          callType: session.callType,
+          acceptedAt: session.acceptedAt.toISOString(),
         });
 
-        console.log(`✅ Call accepted by ${data.toUserId}`);
+        emitToUser(data.toUserId, 'call-accepted-local', {
+          callId: session.callId,
+          callType: session.callType,
+          acceptedAt: session.acceptedAt.toISOString(),
+        });
       } catch (error) {
         console.error('Error accepting call:', error);
         socket.emit('call-error', { message: 'Failed to accept call' });
       }
     });
 
-    // Reject call
     socket.on('reject-call', async (data: { fromUserId: string; toUserId: string }) => {
       try {
-        const fromUserSocketId = activeUsers.get(data.fromUserId);
-        
-        if (fromUserSocketId) {
-          io.to(fromUserSocketId).emit('call-rejected', {
-            rejectedByUserId: data.toUserId,
-          });
+        const sessionKey = getSessionKey(data.fromUserId, data.toUserId);
+        const session = callSessions.get(sessionKey);
+
+        emitToUser(data.fromUserId, 'call-rejected', {
+          rejectedByUserId: data.toUserId,
+          callId: session?.callId,
+        });
+
+        if (session) {
+          await finalizeCall(session, 'rejected');
+          callSessions.delete(sessionKey);
         }
-
-        // Update call history status to rejected
-        try {
-          const call = await CallHistory.findOne({
-            $or: [
-              { callerId: data.fromUserId, receiverId: data.toUserId },
-              { callerId: data.toUserId, receiverId: data.fromUserId },
-            ],
-          }).sort({ startedAt: -1 });
-
-          if (call && !call.endedAt) {
-            call.status = 'rejected';
-            call.endedAt = new Date();
-            call.duration = 0;
-            await call.save();
-          }
-        } catch (historyErr) {
-          console.error('Failed to update rejected call history:', historyErr);
-        }
-
-        // Clear call progress
-        callInProgress.delete(data.fromUserId);
-        callInProgress.delete(data.toUserId);
-
-        console.log(`❌ Call rejected by ${data.toUserId}`);
       } catch (error) {
         console.error('Error rejecting call:', error);
       }
     });
 
-    // Handle ICE candidates
     socket.on('ice-candidate', (data: { candidate: any; toUserId: string }) => {
       try {
-        const toUserSocketId = activeUsers.get(data.toUserId);
-        if (toUserSocketId) {
-          // Get sender's user ID from active users map
-          let fromUserId = '';
-          for (const [userId, socketId] of activeUsers.entries()) {
-            if (socketId === socket.id) {
-              fromUserId = userId;
-              break;
-            }
-          }
-          io.to(toUserSocketId).emit('ice-candidate', {
-            candidate: data.candidate,
-            fromUserId,
-          });
-        }
+        const fromUserId = getUserIdBySocket(socket.id);
+        if (!fromUserId) return;
+
+        emitToUser(data.toUserId, 'ice-candidate', {
+          candidate: data.candidate,
+          fromUserId,
+        });
       } catch (error) {
         console.error('Error sending ICE candidate:', error);
       }
     });
 
-    // Handle offer/answer exchange
-    socket.on('send-offer', (data: { toUserId: string; offer: any; callType?: 'voice' | 'video' }) => {
+    socket.on('send-offer', (data: { toUserId: string; offer: any; callType?: CallType }) => {
       try {
-        const toUserSocketId = activeUsers.get(data.toUserId);
-        if (toUserSocketId) {
-          // Get sender's user ID from active users map
-          let fromUserId = '';
-          for (const [userId, socketId] of activeUsers.entries()) {
-            if (socketId === socket.id) {
-              fromUserId = userId;
-              break;
-            }
-          }
-          io.to(toUserSocketId).emit('receive-offer', {
-            offer: data.offer,
-            fromUserId,
-            callType: data.callType,
-          });
-        }
+        const fromUserId = getUserIdBySocket(socket.id);
+        if (!fromUserId) return;
+        const session = callSessions.get(getSessionKey(fromUserId, data.toUserId));
+        if (!session || session.offerSent) return;
+        session.offerSent = true;
+
+        emitToUser(data.toUserId, 'receive-offer', {
+          offer: data.offer,
+          fromUserId,
+          callType: data.callType,
+        });
       } catch (error) {
         console.error('Error sending offer:', error);
       }
@@ -224,215 +260,111 @@ export const initializeSocket = (httpServer: HTTPServer) => {
 
     socket.on('send-answer', (data: { toUserId: string; answer: any }) => {
       try {
-        const toUserSocketId = activeUsers.get(data.toUserId);
-        if (toUserSocketId) {
-          // Get sender's user ID from active users map
-          let fromUserId = '';
-          for (const [userId, socketId] of activeUsers.entries()) {
-            if (socketId === socket.id) {
-              fromUserId = userId;
-              break;
-            }
-          }
-          io.to(toUserSocketId).emit('receive-answer', {
-            answer: data.answer,
-            fromUserId,
-          });
-        }
+        const fromUserId = getUserIdBySocket(socket.id);
+        if (!fromUserId) return;
+        const session = callSessions.get(getSessionKey(fromUserId, data.toUserId));
+        if (!session || session.answerSent) return;
+        session.answerSent = true;
+
+        emitToUser(data.toUserId, 'receive-answer', {
+          answer: data.answer,
+          fromUserId,
+        });
       } catch (error) {
         console.error('Error sending answer:', error);
       }
     });
 
-    // End call
     socket.on('end-call', async (data: { fromUserId: string; toUserId: string }) => {
       try {
-        const toUserSocketId = activeUsers.get(data.toUserId);
-        
-        if (toUserSocketId) {
-          io.to(toUserSocketId).emit('call-ended', {
-            endedByUserId: data.fromUserId,
-          });
+        const sessionKey = getSessionKey(data.fromUserId, data.toUserId);
+        const session = callSessions.get(sessionKey);
+
+        emitToUser(data.toUserId, 'call-ended', {
+          endedByUserId: data.fromUserId,
+          callId: session?.callId,
+        });
+
+        if (session) {
+          await finalizeCall(session, session.acceptedAt ? 'completed' : 'missed');
+          callSessions.delete(sessionKey);
         }
-
-        // Update call history with endedAt and duration
-        try {
-          const call = await CallHistory.findOne({
-            $or: [
-              { callerId: data.fromUserId, receiverId: data.toUserId },
-              { callerId: data.toUserId, receiverId: data.fromUserId },
-            ],
-          }).sort({ startedAt: -1 });
-
-          if (call && !call.endedAt) {
-            call.endedAt = new Date();
-            const durationSeconds = Math.max(0, Math.floor((call.endedAt.getTime() - call.startedAt.getTime()) / 1000));
-            call.duration = durationSeconds;
-            call.status = 'completed';
-            await call.save();
-          }
-        } catch (historyErr) {
-          console.error('Failed to update completed call history:', historyErr);
-        }
-
-        // Clear call progress
-        callInProgress.delete(data.fromUserId);
-        callInProgress.delete(data.toUserId);
-
-        console.log(`📴 Call ended between ${data.fromUserId} and ${data.toUserId}`);
       } catch (error) {
         console.error('Error ending call:', error);
       }
     });
 
-    // Handle typing events
-    socket.on('start-typing', async (data: { toUserId: string }) => {
+    socket.on('start-typing', (data: { toUserId: string }) => {
       try {
-        const toUserSocketId = activeUsers.get(data.toUserId);
-        if (toUserSocketId) {
-          // Get sender's user ID from active users map
-          let fromUserId = '';
-          for (const [userId, socketId] of activeUsers.entries()) {
-            if (socketId === socket.id) {
-              fromUserId = userId;
-              break;
-            }
-          }
-          // Track typing user
-          typingUsers.set(fromUserId, data.toUserId);
-          io.to(toUserSocketId).emit('partner-typing', { userId: fromUserId });
-          console.log(`⌨️ User ${fromUserId} started typing to ${data.toUserId}`);
-        }
+        const fromUserId = getUserIdBySocket(socket.id);
+        if (!fromUserId) return;
+
+        typingUsers.set(fromUserId, data.toUserId);
+        emitToUser(data.toUserId, 'partner-typing', { userId: fromUserId });
       } catch (error) {
         console.error('Error handling start-typing:', error);
       }
     });
 
-    socket.on('stop-typing', async (data: { toUserId: string }) => {
+    socket.on('stop-typing', (data: { toUserId: string }) => {
       try {
-        const toUserSocketId = activeUsers.get(data.toUserId);
-        if (toUserSocketId) {
-          // Get sender's user ID from active users map
-          let fromUserId = '';
-          for (const [userId, socketId] of activeUsers.entries()) {
-            if (socketId === socket.id) {
-              fromUserId = userId;
-              break;
-            }
-          }
-          // Remove from typing users
-          typingUsers.delete(fromUserId);
-          io.to(toUserSocketId).emit('partner-stop-typing', { userId: fromUserId });
-          console.log(`⌨️ User ${fromUserId} stopped typing to ${data.toUserId}`);
-        }
+        const fromUserId = getUserIdBySocket(socket.id);
+        if (!fromUserId) return;
+
+        typingUsers.delete(fromUserId);
+        emitToUser(data.toUserId, 'partner-stop-typing', { userId: fromUserId });
       } catch (error) {
         console.error('Error handling stop-typing:', error);
       }
     });
 
-    // Handle activity status updates
-    socket.on('update-activity', async (data: { userId: string; isActive: boolean; partnerId: string }) => {
+    socket.on('update-activity', (data: { userId: string; isActive: boolean; partnerId: string }) => {
       try {
-        const partnerSocketId = activeUsers.get(data.partnerId);
-        if (partnerSocketId) {
-          if (data.isActive) {
-            io.to(partnerSocketId).emit('partner-active', { userId: data.userId });
-            console.log(`📡 Notified partner ${data.partnerId} that user ${data.userId} is active`);
-          } else {
-            io.to(partnerSocketId).emit('partner-inactive', { userId: data.userId });
-            console.log(`📡 Notified partner ${data.partnerId} that user ${data.userId} is inactive`);
-          }
-        }
+        emitToUser(data.partnerId, data.isActive ? 'partner-active' : 'partner-inactive', {
+          userId: data.userId,
+        });
       } catch (error) {
         console.error('Error handling activity update:', error);
       }
     });
 
-    // Handle disconnect
     socket.on('disconnect', async () => {
-      let disconnectedUserId = '';
+      const disconnectedUserId = unregisterSocket(socket.id);
+      if (!disconnectedUserId) return;
 
-      // Find the user from active users
-      for (const [userId, socketId] of activeUsers.entries()) {
-        if (socketId === socket.id) {
-          disconnectedUserId = userId;
-          break;
+      const remainingConnections = userSockets.get(disconnectedUserId)?.size || 0;
+      console.log(`Socket ${socket.id} disconnected for user ${disconnectedUserId} (${remainingConnections} remaining)`);
+
+      if (remainingConnections > 0) return;
+
+      try {
+        const user = await User.findById(disconnectedUserId).select('partnerId');
+        if (user?.partnerId) {
+          emitToUser(user.partnerId.toString(), 'partner-offline', { userId: disconnectedUserId });
         }
+      } catch (error) {
+        console.error('Error notifying partner of offline status:', error);
       }
 
-      if (disconnectedUserId) {
-        // Decrement connection count
-        const currentCount = userConnectionCount.get(disconnectedUserId) || 0;
-        const newCount = Math.max(0, currentCount - 1);
-        userConnectionCount.set(disconnectedUserId, newCount);
+      const typingPartnerId = typingUsers.get(disconnectedUserId);
+      if (typingPartnerId) {
+        emitToUser(typingPartnerId, 'partner-stop-typing', { userId: disconnectedUserId });
+        typingUsers.delete(disconnectedUserId);
+      }
 
-        console.log(`🔌 Socket ${socket.id} disconnected for user ${disconnectedUserId} (remaining connections: ${newCount})`);
-
-        // If no connections remain, immediately notify offline and cleanup
-        if (newCount === 0) {
-          // Immediately notify partner that user went offline
-          try {
-            const user = await User.findById(disconnectedUserId).select('partnerId');
-            if (user?.partnerId) {
-              const partnerSocketId = activeUsers.get(user.partnerId.toString());
-              if (partnerSocketId) {
-                io.to(partnerSocketId).emit('partner-offline', { userId: disconnectedUserId });
-                console.log(`📡 Notified partner ${user.partnerId} that user ${disconnectedUserId} is offline`);
-              }
-            }
-          } catch (error) {
-            console.error('Error notifying partner of offline status:', error);
-          }
-
-          // Remove from active users immediately
-          activeUsers.delete(disconnectedUserId);
-
-          // Clear typing status
-          const typingPartnerId = typingUsers.get(disconnectedUserId);
-          if (typingPartnerId) {
-            const partnerSocketId = activeUsers.get(typingPartnerId);
-            if (partnerSocketId) {
-              io.to(partnerSocketId).emit('partner-stop-typing', { userId: disconnectedUserId });
-              console.log(`⌨️ Cleared typing status for disconnected user ${disconnectedUserId}`);
-            }
-            typingUsers.delete(disconnectedUserId);
-          }
-
-          // End any active calls
-          const partnerId = callInProgress.get(disconnectedUserId);
-          if (partnerId) {
-            const partnerSocketId = activeUsers.get(partnerId);
-            if (partnerSocketId) {
-              io.to(partnerSocketId).emit('call-ended', {
-                endedByUserId: disconnectedUserId,
-              });
-            }
-            // Update call history for disconnect scenario
-            try {
-              const call = await CallHistory.findOne({
-                $or: [
-                  { callerId: disconnectedUserId, receiverId: partnerId },
-                  { callerId: partnerId, receiverId: disconnectedUserId },
-                ],
-              }).sort({ startedAt: -1 });
-
-              if (call && !call.endedAt) {
-                call.endedAt = new Date();
-                const durationSeconds = Math.max(0, Math.floor((call.endedAt.getTime() - call.startedAt.getTime()) / 1000));
-                call.duration = durationSeconds;
-                call.status = 'completed';
-                await call.save();
-              }
-            } catch (historyErr) {
-              console.error('Failed to update call history on disconnect:', historyErr);
-            }
-
-            callInProgress.delete(disconnectedUserId);
-            callInProgress.delete(partnerId);
-          }
-
-          console.log(`📴 User ${disconnectedUserId} marked offline immediately`);
+      for (const [sessionKey, session] of callSessions.entries()) {
+        if (session.callerId !== disconnectedUserId && session.receiverId !== disconnectedUserId) {
+          continue;
         }
+
+        const partnerId = session.callerId === disconnectedUserId ? session.receiverId : session.callerId;
+        emitToUser(partnerId, 'call-ended', {
+          endedByUserId: disconnectedUserId,
+          callId: session.callId,
+        });
+
+        await finalizeCall(session, session.acceptedAt ? 'completed' : 'missed');
+        callSessions.delete(sessionKey);
       }
     });
   });

@@ -5,6 +5,7 @@ import fs from 'fs';
 import Message from '../models/message';
 import path from 'path';
 import User from '../models/user';
+import { getIO } from '../services/socketService';
 
 function saveBufferToLocalUploads(buffer: Buffer, fileName: string) {
   const uploadsDir = path.join(process.cwd(), 'public', 'uploads');
@@ -16,6 +17,31 @@ function saveBufferToLocalUploads(buffer: Buffer, fileName: string) {
   const localFilePath = path.join(uploadsDir, safeName);
   fs.writeFileSync(localFilePath, buffer);
   return `/uploads/${safeName}`;
+}
+
+async function getPopulatedMessage(messageId: string) {
+  return Message.findById(messageId)
+    .populate('senderId', 'displayName avatarUrl')
+    .populate('recipientId', 'displayName avatarUrl')
+    .populate('reactions.userId', 'displayName avatarUrl')
+    .populate({
+      path: 'replyTo',
+      populate: {
+        path: 'senderId',
+        select: 'displayName avatarUrl'
+      }
+    })
+    .populate({
+      path: 'forwardedFrom',
+      populate: {
+        path: 'senderId',
+        select: 'displayName avatarUrl'
+      }
+    });
+}
+
+function emitToUser(userId: string, event: string, payload: unknown) {
+  getIO().to(`user-${userId}`).emit(event, payload);
 }
 
 // @desc    Get all messages between partners
@@ -56,7 +82,7 @@ export const getMessages = async (req: AuthRequest, res: Response) => {
 // @route   POST /api/messages
 // @access  Private
 export const sendMessage = async (req: AuthRequest, res: Response) => {
-  const { content, mediaUrl, mediaType, replyTo } = req.body;
+  const { content, mediaUrl, mediaType, replyTo, clientTempId } = req.body;
   const user = req.user;
 
   try {
@@ -76,15 +102,12 @@ export const sendMessage = async (req: AuthRequest, res: Response) => {
     await message.save();
 
     // Populate sender details and replyTo for the response
-    const populatedMessage = await Message.findById(message._id)
-      .populate('senderId', 'displayName avatarUrl')
-      .populate({
-        path: 'replyTo',
-        populate: {
-          path: 'senderId',
-          select: 'displayName avatarUrl'
-        }
-      });
+    const populatedMessage = await getPopulatedMessage(String(message._id));
+
+    if (populatedMessage) {
+      emitToUser(String(user.partnerId), 'message:new', populatedMessage);
+      emitToUser(String(user._id), 'message:sent', { clientTempId, message: populatedMessage });
+    }
 
     res.status(201).json(populatedMessage);
   } catch (error: any) {
@@ -96,7 +119,7 @@ export const sendMessage = async (req: AuthRequest, res: Response) => {
 // @route   POST /api/messages/audio
 // @access  Private
 export const sendVoiceMessage = async (req: AuthRequest, res: Response) => {
-  const { audioBase64, mimeType, fileName, replyTo } = req.body;
+  const { audioBase64, mimeType, fileName, replyTo, clientTempId } = req.body;
   const user = req.user;
 
   try {
@@ -131,15 +154,12 @@ export const sendVoiceMessage = async (req: AuthRequest, res: Response) => {
 
     await message.save();
 
-    const populatedMessage = await Message.findById(message._id)
-      .populate('senderId', 'displayName avatarUrl')
-      .populate({
-        path: 'replyTo',
-        populate: {
-          path: 'senderId',
-          select: 'displayName avatarUrl'
-        }
-      });
+    const populatedMessage = await getPopulatedMessage(String(message._id));
+
+    if (populatedMessage) {
+      emitToUser(String(message.senderId), 'message:update', populatedMessage);
+      emitToUser(String(message.recipientId), 'message:update', populatedMessage);
+    }
 
     res.status(201).json(populatedMessage);
   } catch (error: any) {
@@ -171,15 +191,12 @@ export const editMessage = async (req: AuthRequest, res: Response) => {
     await message.save();
 
     // Populate sender details and replyTo for the response
-    const populatedMessage = await Message.findById(message._id)
-      .populate('senderId', 'displayName avatarUrl')
-      .populate({
-        path: 'replyTo',
-        populate: {
-          path: 'senderId',
-          select: 'displayName avatarUrl'
-        }
-      });
+    const populatedMessage = await getPopulatedMessage(String(message._id));
+
+    if (populatedMessage) {
+      emitToUser(String(message.senderId), 'message:update', populatedMessage);
+      emitToUser(String(message.recipientId), 'message:update', populatedMessage);
+    }
 
     res.json(populatedMessage);
   } catch (error: any) {
@@ -210,15 +227,12 @@ export const deleteMessageForEveryone = async (req: AuthRequest, res: Response) 
     await message.save();
 
     // Populate sender details and replyTo for the response
-    const populatedMessage = await Message.findById(message._id)
-      .populate('senderId', 'displayName avatarUrl')
-      .populate({
-        path: 'replyTo',
-        populate: {
-          path: 'senderId',
-          select: 'displayName avatarUrl'
-        }
-      });
+    const populatedMessage = await getPopulatedMessage(String(message._id));
+
+    if (populatedMessage) {
+      emitToUser(String(message.senderId), 'message:update', populatedMessage);
+      emitToUser(String(message.recipientId), 'message:update', populatedMessage);
+    }
 
     res.json(populatedMessage);
   } catch (error: any) {
@@ -254,6 +268,7 @@ export const deleteMessageForMe = async (req: AuthRequest, res: Response) => {
     }
 
     await message.save();
+    emitToUser(String(user._id), 'message:delete', { messageId: id });
 
     res.json({ message: 'Message deleted for you.' });
   } catch (error: any) {
@@ -297,17 +312,12 @@ export const addReaction = async (req: AuthRequest, res: Response) => {
 
     await message.save();
 
-    const populatedMessage = await Message.findById(message._id)
-      .populate('senderId', 'displayName avatarUrl')
-      .populate('recipientId', 'displayName avatarUrl')
-      .populate('reactions.userId', 'displayName avatarUrl')
-      .populate({
-        path: 'replyTo',
-        populate: {
-          path: 'senderId',
-          select: 'displayName avatarUrl'
-        }
-      });
+    const populatedMessage = await getPopulatedMessage(String(message._id));
+
+    if (populatedMessage) {
+      emitToUser(String(message.senderId), 'message:update', populatedMessage);
+      emitToUser(String(message.recipientId), 'message:update', populatedMessage);
+    }
 
     res.json(populatedMessage);
   } catch (error: any) {
@@ -340,17 +350,12 @@ export const removeReaction = async (req: AuthRequest, res: Response) => {
 
     await message.save();
 
-    const populatedMessage = await Message.findById(message._id)
-      .populate('senderId', 'displayName avatarUrl')
-      .populate('recipientId', 'displayName avatarUrl')
-      .populate('reactions.userId', 'displayName avatarUrl')
-      .populate({
-        path: 'replyTo',
-        populate: {
-          path: 'senderId',
-          select: 'displayName avatarUrl'
-        }
-      });
+    const populatedMessage = await getPopulatedMessage(String(message._id));
+
+    if (populatedMessage) {
+      emitToUser(String(message.senderId), 'message:update', populatedMessage);
+      emitToUser(String(message.recipientId), 'message:update', populatedMessage);
+    }
 
     res.json(populatedMessage);
   } catch (error: any) {

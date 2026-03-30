@@ -1,9 +1,9 @@
 import type { ImagePickerAsset } from 'expo-image-picker';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { router } from 'expo-router';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
-import { Platform } from 'react-native';
+import { InteractionManager, Platform } from 'react-native';
 import { io, Socket } from 'socket.io-client';
 import { api, SOCKET_URL } from './api';
 import { auth, signInWithEmail, signOutUser, signUpWithEmail } from './firebase';
@@ -15,6 +15,22 @@ type UploadAsset = {
   fileName?: string | null;
   mimeType?: string | null;
   type?: string | null;
+};
+
+const MIME_TYPE_TO_EXTENSION: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/gif': 'gif',
+  'image/webp': 'webp',
+  'video/mp4': 'mp4',
+  'video/quicktime': 'mov',
+  'video/webm': 'webm',
+  'audio/m4a': 'm4a',
+  'audio/mp4': 'm4a',
+  'audio/mpeg': 'mp3',
+  'audio/mp3': 'mp3',
+  'audio/wav': 'wav',
+  'audio/x-wav': 'wav',
 };
 
 type IncomingCall = {
@@ -42,6 +58,11 @@ type CallIceCandidateSignal = {
   fromUserId: string;
   candidate: any;
   signalId: string;
+};
+
+type MessageDeliveryPayload = {
+  clientTempId?: string;
+  message: Message;
 };
 
 type AppStateValue = {
@@ -94,7 +115,8 @@ type AppStateValue = {
   startTyping: () => void;
   stopTyping: () => void;
   startCall: (type: 'voice' | 'video') => void;
-  acceptCall: () => void;
+  initiateCall: (toUserId: string, offer: any, type: 'voice' | 'video') => void;
+  acceptCall: (answer: any) => void;
   rejectCall: () => void;
   endCall: () => void;
   sendOffer: (toUserId: string, offer: any, callType?: 'voice' | 'video') => void;
@@ -107,20 +129,42 @@ const AppStateContext = createContext<AppStateValue | null>(null);
 async function buildFileFormData(fieldName: string, asset: UploadAsset, extra?: Record<string, string>) {
   const formData = new FormData();
   const normalizedType = asset.type || (asset.mimeType?.startsWith('video') ? 'video' : asset.mimeType?.startsWith('audio') ? 'audio' : 'image');
-  const fileName =
-    asset.fileName ||
-    `${fieldName}.${normalizedType === 'video' ? 'mp4' : normalizedType === 'audio' ? 'm4a' : 'jpg'}`;
   const mimeType =
     asset.mimeType ||
     (normalizedType === 'video' ? 'video/mp4' : normalizedType === 'audio' ? 'audio/m4a' : 'image/jpeg');
+  const inferredExtension =
+    asset.fileName?.split('.').pop()?.trim().toLowerCase() ||
+    MIME_TYPE_TO_EXTENSION[mimeType] ||
+    (normalizedType === 'video' ? 'mp4' : normalizedType === 'audio' ? 'm4a' : 'jpg');
+  const baseFileName =
+    asset.fileName?.trim().replace(/[^\w.-]/g, '_') ||
+    `${fieldName}-${Date.now()}.${inferredExtension}`;
+  const fileName = /\.[A-Za-z0-9]+$/.test(baseFileName) ? baseFileName : `${baseFileName}.${inferredExtension}`;
 
   if (Platform.OS === 'web') {
     const fileResponse = await fetch(asset.uri);
     const blob = await fileResponse.blob();
     formData.append(fieldName, blob, fileName);
   } else {
+    let uploadUri = asset.uri;
+
+    if (!uploadUri.startsWith('file://') && !uploadUri.startsWith('/')) {
+      const cacheRoot = FileSystem.cacheDirectory || FileSystem.documentDirectory;
+      if (!cacheRoot) {
+        throw new Error('Unable to prepare this file for upload on your device.');
+      }
+
+      const sanitizedFieldName = fieldName.replace(/[^\w-]/g, '_');
+      const destinationUri = `${cacheRoot}${sanitizedFieldName}-${Date.now()}.${inferredExtension}`;
+      await FileSystem.copyAsync({
+        from: uploadUri,
+        to: destinationUri,
+      });
+      uploadUri = destinationUri;
+    }
+
     formData.append(fieldName, {
-      uri: asset.uri,
+      uri: uploadUri,
       name: fileName,
       type: mimeType,
     } as any);
@@ -154,9 +198,25 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const socketRef = useRef<Socket | null>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const bootstrappingRef = useRef(false);
 
   const partner = currentUser?.partnerId || null;
   const isSignedIn = !!authUser;
+
+  const upsertMessage = useCallback((incomingMessage: Message) => {
+    setMessages((prev) => {
+      const index = prev.findIndex((item) => item._id === incomingMessage._id);
+      if (index >= 0) {
+        const next = [...prev];
+        next[index] = incomingMessage;
+        return next;
+      }
+
+      return [...prev, incomingMessage].sort(
+        (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+      );
+    });
+  }, []);
 
   const refreshProfile = useCallback(async () => {
     const response = await api.get<{ user: UserProfile }>('/auth/profile');
@@ -210,11 +270,44 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     }
   }, [loadCalls, loadGallery, loadGoals, loadMessages, loadMoments, refreshProfile]);
 
+  const refreshSecondaryData = useCallback(async () => {
+    await Promise.allSettled([loadMessages(), loadGallery(), loadMoments(), loadGoals(), loadCalls()]);
+  }, [loadCalls, loadGallery, loadGoals, loadMessages, loadMoments]);
+
+  const bootstrapSignedInState = useCallback(async () => {
+    if (!auth.currentUser || bootstrappingRef.current) return;
+
+    bootstrappingRef.current = true;
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      await refreshProfile();
+
+      InteractionManager.runAfterInteractions(() => {
+        refreshSecondaryData()
+          .catch((err: any) => {
+            setError(err?.message || 'Failed to load app data');
+          })
+          .finally(() => {
+            setIsLoading(false);
+            bootstrappingRef.current = false;
+          });
+      });
+    } catch (err: any) {
+      setError(err.message || 'Failed to load app data');
+      setIsLoading(false);
+      bootstrappingRef.current = false;
+      throw err;
+    }
+  }, [refreshProfile, refreshSecondaryData]);
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setAuthUser(user);
       setIsInitializing(false);
       if (!user) {
+        bootstrappingRef.current = false;
         setCurrentUser(null);
         setMessages([]);
         setGallery([]);
@@ -226,11 +319,11 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       try {
-        await refreshAll();
+        await bootstrapSignedInState();
       } catch {}
     });
     return unsubscribe;
-  }, [refreshAll]);
+  }, [bootstrapSignedInState]);
 
   useEffect(() => {
     if (!currentUser?._id) return;
@@ -262,16 +355,43 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     socket.on('partner-stop-typing', ({ userId }) => {
       if (currentUser.partnerId?._id === userId) setPartnerTyping(false);
     });
+    socket.on('message:new', (incomingMessage: Message) => {
+      if (
+        incomingMessage.senderId?._id !== currentUser.partnerId?._id &&
+        incomingMessage.recipientId?._id !== currentUser.partnerId?._id
+      ) {
+        return;
+      }
+      upsertMessage(incomingMessage);
+    });
+    socket.on('message:sent', ({ clientTempId, message }: MessageDeliveryPayload) => {
+      if (!message) return;
+      setMessages((prev) => {
+        const next = prev.map((item) => (clientTempId && item._id === clientTempId ? message : item));
+        return next.some((item) => item._id === message._id)
+          ? next
+          : [...next, message].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+      });
+    });
+    socket.on('message:update', (incomingMessage: Message) => {
+      upsertMessage(incomingMessage);
+    });
+    socket.on('message:delete', ({ messageId }: { messageId: string }) => {
+      setMessages((prev) => prev.filter((message) => message._id !== messageId));
+    });
     socket.on('incoming-call', (data: IncomingCall) => {
+      setCallAcceptedAt(0);
+      setActiveCallType(null);
       setIncomingCall(data);
       setLatestOfferSignal(null);
       setLatestAnswerSignal(null);
       setLatestIceCandidateSignal(null);
-      router.push('/video' as never);
+      router.push((data.callType === 'voice' ? '/voice' : '/video') as never);
     });
     socket.on('call-ended', async () => {
       setActiveCallType(null);
       setIncomingCall(null);
+      setCallAcceptedAt(0);
       setLatestOfferSignal(null);
       setLatestAnswerSignal(null);
       setLatestIceCandidateSignal(null);
@@ -280,20 +400,33 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     socket.on('call-rejected', async () => {
       setActiveCallType(null);
       setIncomingCall(null);
+      setCallAcceptedAt(0);
       setLatestOfferSignal(null);
       setLatestAnswerSignal(null);
       setLatestIceCandidateSignal(null);
       await loadCalls();
     });
-    socket.on('call-accepted', async () => {
+    socket.on('call-accepted', async (data: { answer?: any; acceptedByUserId?: string; acceptedAt?: string }) => {
       setIncomingCall(null);
-      setCallAcceptedAt(Date.now());
+      setCallAcceptedAt(data?.acceptedAt ? new Date(data.acceptedAt).getTime() : Date.now());
+      if (data?.answer && data.acceptedByUserId) {
+        setLatestAnswerSignal({
+          fromUserId: data.acceptedByUserId,
+          answer: data.answer,
+          signalId: `accepted-answer-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        });
+      }
+      await loadCalls();
+    });
+    socket.on('call-accepted-local', async (data: { acceptedAt?: string }) => {
+      setCallAcceptedAt(data?.acceptedAt ? new Date(data.acceptedAt).getTime() : Date.now());
       await loadCalls();
     });
     socket.on('call-error', ({ message }: { message: string }) => {
       setError(message || 'Call failed');
       setActiveCallType(null);
       setIncomingCall(null);
+      setCallAcceptedAt(0);
       setLatestOfferSignal(null);
       setLatestAnswerSignal(null);
       setLatestIceCandidateSignal(null);
@@ -324,14 +457,14 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       socket.disconnect();
       socketRef.current = null;
     };
-  }, [currentUser?._id, currentUser?.partnerId?._id, loadCalls, refreshProfile]);
+  }, [currentUser?._id, currentUser?.partnerId?._id, loadCalls, refreshProfile, upsertMessage]);
 
   useEffect(() => {
     if (!authUser || !currentUser) return;
     const interval = setInterval(() => {
       loadMessages().catch(() => undefined);
       refreshProfile().catch(() => undefined);
-    }, 4000);
+    }, 15000);
     return () => clearInterval(interval);
   }, [authUser, currentUser, loadMessages, refreshProfile]);
 
@@ -364,12 +497,10 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
         setError(null);
         try {
           await signInWithEmail(email, password);
-          await refreshAll();
         } catch (err: any) {
           setError(err.message || 'Sign in failed');
-          throw err;
-        } finally {
           setIsLoading(false);
+          throw err;
         }
       },
       signUp: async (name, email, password) => {
@@ -378,12 +509,10 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
         try {
           await signUpWithEmail(name, email, password);
           await api.post('/auth/register', {});
-          await refreshAll();
         } catch (err: any) {
           setError(err.message || 'Sign up failed');
-          throw err;
-        } finally {
           setIsLoading(false);
+          throw err;
         }
       },
       signOut: async () => {
@@ -417,7 +546,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
         setMessages((prev) => [...prev, optimisticMessage]);
 
         try {
-          const response = await api.post<Message>('/messages', { content: text, replyTo });
+          const response = await api.post<Message>('/messages', { content: text, replyTo, clientTempId: tempId });
           setMessages((prev) => prev.map((message) => (message._id === tempId ? response : message)));
         } catch (error) {
           setMessages((prev) => prev.filter((message) => message._id !== tempId));
@@ -427,10 +556,12 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       sendMediaMessage: async (asset, caption, replyTo) => {
         const uploadFormData = await buildFileFormData('file', asset, caption ? { caption } : undefined);
         const media = await api.post<MediaItem>('/gallery/upload', uploadFormData);
+        const isVideoAttachment = media.mediaType?.startsWith('video/');
         const response = await api.post<Message>('/messages', {
-          content: caption?.trim() || undefined,
+          content: caption?.trim() || (isVideoAttachment ? 'Shared a video' : 'Shared a photo'),
           mediaUrl: media.mediaUrl,
           mediaType: media.mediaType,
+          messageType: isVideoAttachment ? 'video' : 'image',
           replyTo,
         });
         setMessages((prev) => [...prev, response]);
@@ -439,18 +570,49 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
         }
       },
       sendVoiceMessage: async (asset, replyTo) => {
+        const tempId = `temp-audio-${Date.now()}`;
+        const optimisticMessage: Message = {
+          _id: tempId,
+          senderId: {
+            _id: currentUser?._id || tempId,
+            displayName: currentUser?.displayName || 'You',
+            avatarUrl: currentUser?.avatarUrl,
+          },
+          recipientId: {
+            _id: partner?._id || 'partner',
+            displayName: partner?.displayName || 'Partner',
+            avatarUrl: partner?.avatarUrl,
+          },
+          content: '',
+          mediaType: asset.mimeType || 'audio/m4a',
+          isRead: false,
+          createdAt: new Date().toISOString(),
+          replyTo: replyTo
+            ? (messages.find((message) => message._id === replyTo)?.replyTo || messages.find((message) => message._id === replyTo)) as any
+            : null,
+          deliveryStatus: 'sent',
+        };
+
+        setMessages((prev) => [...prev, optimisticMessage]);
+
         const audioBase64 = await FileSystem.readAsStringAsync(asset.uri, {
           encoding: FileSystem.EncodingType.Base64,
         });
 
-        const response = await api.post<Message>('/messages/audio', {
-          audioBase64,
-          mimeType: asset.mimeType || 'audio/m4a',
-          fileName: asset.fileName || `voice-note-${Date.now()}.m4a`,
-          replyTo,
-        });
+        try {
+          const response = await api.post<Message>('/messages/audio', {
+            audioBase64,
+            mimeType: asset.mimeType || 'audio/m4a',
+            fileName: asset.fileName || `voice-note-${Date.now()}.m4a`,
+            replyTo,
+            clientTempId: tempId,
+          });
 
-        setMessages((prev) => [...prev, response]);
+          setMessages((prev) => prev.map((message) => (message._id === tempId ? response : message)));
+        } catch (error) {
+          setMessages((prev) => prev.filter((message) => message._id !== tempId));
+          throw error;
+        }
       },
       editMessage: async (id, text) => {
         const response = await api.put<Message>(`/messages/${id}`, { content: text });
@@ -547,25 +709,32 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
         socketRef.current.emit('stop-typing', { toUserId: currentUser.partnerId._id });
       },
       startCall: (type) => {
-        if (!socketRef.current || !currentUser?._id || !currentUser.partnerId?._id) return;
         setActiveCallType(type);
         setIncomingCall(null);
+        setCallAcceptedAt(0);
+        setLatestOfferSignal(null);
+        setLatestAnswerSignal(null);
+        setLatestIceCandidateSignal(null);
+      },
+      initiateCall: (toUserId, offer, type) => {
+        if (!socketRef.current || !currentUser?._id) return;
         socketRef.current.emit('initiate-call', {
           fromUserId: currentUser._id,
-          toUserId: currentUser.partnerId._id,
-          offer: null,
+          toUserId,
+          offer,
           callType: type,
         });
       },
-      acceptCall: () => {
+      acceptCall: (answer) => {
         if (!socketRef.current || !currentUser?._id || !incomingCall?.fromUserId) return;
         socketRef.current.emit('accept-call', {
           fromUserId: incomingCall.fromUserId,
           toUserId: currentUser._id,
-          answer: incomingCall.offer ?? null,
+          answer,
         });
         setActiveCallType(incomingCall.callType || 'video');
         setIncomingCall(null);
+        setCallAcceptedAt(Date.now());
         loadCalls().catch(() => undefined);
       },
       rejectCall: () => {
@@ -585,6 +754,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
           toUserId: currentUser.partnerId._id,
         });
         setActiveCallType(null);
+        setCallAcceptedAt(0);
         loadCalls().catch(() => undefined);
       },
       sendOffer: (toUserId, offer, callType) => {

@@ -39,7 +39,7 @@ const callHistorySchema: Schema = new Schema({
   status: {
     type: String,
     enum: ['completed', 'missed', 'rejected'],
-    default: 'completed',
+    default: 'missed',
   },
 }, {
   timestamps: true,
