@@ -288,7 +288,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
 
   const reconcileUnreadMessages = useCallback((incomingMessages: Message[], nextPath = activePath) => {
     if (nextPath === '/chat') {
-      setUnreadMessageIds([]);
+      setUnreadMessageIds((prev) => (prev.length === 0 ? prev : []));
       return;
     }
 
@@ -313,6 +313,30 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       setUnreadMessageIds((prev) => prev.filter((id) => id !== messageId));
     } catch {}
   }, [upsertMessage]);
+
+  const setActivePath = useCallback((path: string) => {
+    setActivePathState((prev) => (prev === path ? prev : path));
+    if (path === '/chat') {
+      setUnreadMessageIds((prev) => (prev.length === 0 ? prev : []));
+      setLatestChatNotification(null);
+    }
+  }, []);
+
+  const dismissChatNotification = useCallback(() => {
+    setLatestChatNotification(null);
+  }, []);
+
+  const markConversationAsRead = useCallback(async () => {
+    if (!currentUser?._id) return;
+
+    const unreadIncomingMessages = messages.filter(
+      (message) => message.senderId?._id !== currentUser._id && !message.isRead
+    );
+
+    if (unreadIncomingMessages.length === 0) return;
+
+    await Promise.allSettled(unreadIncomingMessages.map((message) => markMessageAsReadInternal(message._id)));
+  }, [currentUser?._id, markMessageAsReadInternal, messages]);
 
   const loadMessages = useCallback(async () => {
     try {
@@ -434,7 +458,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (activePath === '/chat') {
-      setUnreadMessageIds([]);
+      setUnreadMessageIds((prev) => (prev.length === 0 ? prev : []));
       setLatestChatNotification(null);
     }
   }, [activePath]);
@@ -674,25 +698,9 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       latestChatNotification,
       error,
       setAuthMode,
-      setActivePath: (path) => {
-        setActivePathState(path);
-        if (path === '/chat') {
-          setUnreadMessageIds([]);
-          setLatestChatNotification(null);
-        }
-      },
-      dismissChatNotification: () => {
-        setLatestChatNotification(null);
-      },
-      markConversationAsRead: async () => {
-        if (!currentUser?._id) return;
-
-        const unreadIncomingMessages = messages.filter(
-          (message) => message.senderId?._id !== currentUser._id && !message.isRead
-        );
-
-        await Promise.allSettled(unreadIncomingMessages.map((message) => markMessageAsReadInternal(message._id)));
-      },
+      setActivePath,
+      dismissChatNotification,
+      markConversationAsRead,
       signIn: async (email, password) => {
         setIsLoading(true);
         setError(null);
@@ -1003,7 +1011,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       loadGallery,
       loadGoals,
       loadMoments,
-      markMessageAsReadInternal,
+      markConversationAsRead,
       messages,
       moments,
       partner,
@@ -1011,6 +1019,8 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       partnerTyping,
       refreshAll,
       refreshProfile,
+      dismissChatNotification,
+      setActivePath,
       unreadChatCount,
     ]
   );
