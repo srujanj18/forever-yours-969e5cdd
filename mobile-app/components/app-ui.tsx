@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import {
   Modal,
   Pressable,
@@ -14,6 +14,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { usePathname, useRouter } from 'expo-router';
 import { Calendar, CircleUserRound, Home, Image, MessageCircle, Phone, Target } from 'lucide-react-native';
+import { useAppState } from '../lib/app-state';
 
 const palette = {
   background: '#0A0B2E',
@@ -53,6 +54,7 @@ export function AppShell({
 }: AppShellProps) {
   const pathname = usePathname();
   const router = useRouter();
+  const { latestChatNotification, dismissChatNotification, setActivePath } = useAppState();
   const shouldAutoShowBack = autoBack && pathname !== '/';
   const handleBack = onBack
     ? onBack
@@ -66,6 +68,19 @@ export function AppShell({
           router.replace('/' as never);
         }
       : undefined;
+
+  useEffect(() => {
+    setActivePath(pathname);
+  }, [pathname, setActivePath]);
+
+  useEffect(() => {
+    if (!latestChatNotification || pathname === '/chat') return;
+    const timeout = setTimeout(() => {
+      dismissChatNotification();
+    }, 3500);
+
+    return () => clearTimeout(timeout);
+  }, [dismissChatNotification, latestChatNotification, pathname]);
 
   const content = scroll ? (
     <ScrollView
@@ -93,6 +108,25 @@ export function AppShell({
           <View style={styles.headerSide}>{headerRight}</View>
         </View>
       )}
+      {latestChatNotification && pathname !== '/chat' ? (
+        <Pressable
+          onPress={() => {
+            dismissChatNotification();
+            router.push('/chat' as never);
+          }}
+          style={({ pressed }) => [styles.notificationBanner, pressed ? styles.buttonPressed : null]}
+        >
+          <View style={styles.notificationDot} />
+          <View style={styles.notificationContent}>
+            <Text style={styles.notificationTitle} numberOfLines={1}>
+              {latestChatNotification.senderName}
+            </Text>
+            <Text style={styles.notificationText} numberOfLines={2}>
+              {latestChatNotification.preview}
+            </Text>
+          </View>
+        </Pressable>
+      ) : null}
       {content}
       {showBottomNav ? <BottomNav /> : null}
     </SafeAreaView>
@@ -283,6 +317,7 @@ export function FormModal({
 function BottomNav() {
   const pathname = usePathname();
   const router = useRouter();
+  const { unreadChatCount } = useAppState();
   const items = [
     { label: 'Home', route: '/', icon: Home },
     { label: 'Chat', route: '/chat', icon: MessageCircle },
@@ -303,7 +338,14 @@ function BottomNav() {
             onPress={() => router.push(item.route as never)}
             style={({ pressed }) => [styles.navItem, active ? styles.navItemActive : null, pressed ? styles.buttonPressed : null]}
           >
-            <Icon size={16} color={active ? palette.surface : palette.secondaryText} />
+            <View style={styles.navIconWrap}>
+              <Icon size={16} color={active ? palette.surface : palette.secondaryText} />
+              {item.route === '/chat' && unreadChatCount > 0 ? (
+                <View style={styles.chatBadge}>
+                  <Text style={styles.chatBadgeText}>{unreadChatCount > 99 ? '99+' : unreadChatCount}</Text>
+                </View>
+              ) : null}
+            </View>
             <Text style={[styles.navLabel, active ? styles.navLabelActive : null]}>{item.label}</Text>
           </Pressable>
         );
@@ -372,8 +414,41 @@ const styles = StyleSheet.create({
   modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
   modalTitle: { fontSize: 20, fontWeight: '800', color: palette.text },
   closeIcon: { fontSize: 24, lineHeight: 24, color: palette.rose, fontWeight: '800' },
+  notificationBanner: {
+    marginHorizontal: 16,
+    marginBottom: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: palette.surface,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  notificationDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: palette.green },
+  notificationContent: { flex: 1, gap: 2 },
+  notificationTitle: { color: palette.text, fontSize: 15, fontWeight: '800' },
+  notificationText: { color: palette.secondaryText, fontSize: 13, lineHeight: 18 },
   bottomNav: { position: 'absolute', left: 14, right: 14, bottom: 14, flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', backgroundColor: '#14153D', borderRadius: 20, paddingHorizontal: 6, paddingVertical: 7, gap: 3, borderWidth: 1, borderColor: '#2A2D67' },
   navItem: { width: '15%', minWidth: 46, alignItems: 'center', justifyContent: 'center', borderRadius: 14, paddingVertical: 6, gap: 2 },
+  navIconWrap: { position: 'relative', alignItems: 'center', justifyContent: 'center' },
+  chatBadge: {
+    position: 'absolute',
+    top: -8,
+    right: -14,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    paddingHorizontal: 4,
+    backgroundColor: palette.green,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: palette.background,
+  },
+  chatBadgeText: { color: palette.background, fontSize: 9, fontWeight: '800' },
   navItemActive: { backgroundColor: '#6C63FF' },
   navLabel: { fontSize: 9, color: '#A8A8D0', fontWeight: '700' },
   navLabelActive: { color: palette.surface },

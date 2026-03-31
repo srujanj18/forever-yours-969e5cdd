@@ -2,9 +2,10 @@ import type { ImagePickerAsset } from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { router } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
-import { InteractionManager, Platform } from 'react-native';
+import { AppState, InteractionManager, Platform } from 'react-native';
 import { io, Socket } from 'socket.io-client';
 import { api, SOCKET_URL } from './api';
 import { auth, signInWithEmail, signOutUser, signUpWithEmail } from './firebase';
@@ -66,6 +67,12 @@ type MessageDeliveryPayload = {
   message: Message;
 };
 
+type ChatNotification = {
+  messageId: string;
+  senderName: string;
+  preview: string;
+};
+
 type AppStateValue = {
   authMode: AuthMode;
   isInitializing: boolean;
@@ -87,8 +94,12 @@ type AppStateValue = {
   latestOfferSignal: CallOfferSignal | null;
   latestAnswerSignal: CallAnswerSignal | null;
   latestIceCandidateSignal: CallIceCandidateSignal | null;
+  unreadChatCount: number;
+  latestChatNotification: ChatNotification | null;
   error: string | null;
   setAuthMode: (mode: AuthMode) => void;
+  setActivePath: (path: string) => void;
+  dismissChatNotification: () => void;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (name: string, email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
@@ -126,6 +137,19 @@ type AppStateValue = {
 };
 
 const AppStateContext = createContext<AppStateValue | null>(null);
+const UNREAD_STORAGE_KEY = 'chat-unread-message-ids';
+
+function getMessagePreview(message: Pick<Message, 'content' | 'mediaType'>) {
+  const content = message.content?.trim();
+  if (content && content.toLowerCase() !== 'shared a photo' && content.toLowerCase() !== 'shared a video') {
+    return content;
+  }
+
+  if (message.mediaType?.startsWith('audio/')) return 'Voice message';
+  if (message.mediaType?.startsWith('video/')) return 'Video attachment';
+  if (message.mediaType?.startsWith('image/')) return 'Photo attachment';
+  return 'New message';
+}
 
 async function optimizeUploadAsset(asset: UploadAsset): Promise<UploadAsset> {
   const normalizedType = asset.type || (asset.mimeType?.startsWith('video') ? 'video' : asset.mimeType?.startsWith('audio') ? 'audio' : 'image');
@@ -226,13 +250,19 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   const [latestOfferSignal, setLatestOfferSignal] = useState<CallOfferSignal | null>(null);
   const [latestAnswerSignal, setLatestAnswerSignal] = useState<CallAnswerSignal | null>(null);
   const [latestIceCandidateSignal, setLatestIceCandidateSignal] = useState<CallIceCandidateSignal | null>(null);
+  const [activePath, setActivePathState] = useState('/');
+  const [unreadMessageIds, setUnreadMessageIds] = useState<string[]>([]);
+  const [latestChatNotification, setLatestChatNotification] = useState<ChatNotification | null>(null);
   const [error, setError] = useState<string | null>(null);
   const socketRef = useRef<Socket | null>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bootstrappingRef = useRef(false);
+  const appVisibilityRef = useRef(AppState.currentState);
+  const unreadLoadedRef = useRef(false);
 
   const partner = currentUser?.partnerId || null;
   const isSignedIn = !!authUser;
+  const unreadChatCount = unreadMessageIds.length;
 
   const upsertMessage = useCallback((incomingMessage: Message) => {
     setMessages((prev) => {
@@ -254,17 +284,30 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     setCurrentUser(response.user);
   }, []);
 
+  const syncUnreadMessages = useCallback((incomingMessages: Message[], nextPath = activePath) => {
+    if (!currentUser?._id) return;
+
+    const incomingUnreadIds = incomingMessages
+      .filter((message) => message.senderId?._id !== currentUser._id)
+      .filter((message) => !message.isRead)
+      .map((message) => message._id);
+
+    setUnreadMessageIds(nextPath === '/chat' ? [] : incomingUnreadIds);
+  }, [activePath, currentUser?._id]);
+
   const loadMessages = useCallback(async () => {
     try {
       const response = await api.get<Message[]>('/messages');
       setMessages(response);
+      syncUnreadMessages(response);
     } catch (err: any) {
       if (!String(err?.message || '').includes('not connected')) {
         throw err;
       }
       setMessages([]);
+      setUnreadMessageIds([]);
     }
-  }, []);
+  }, [syncUnreadMessages]);
 
   const loadGallery = useCallback(async () => {
     const response = await api.get<{ media: MediaItem[] }>('/gallery');
@@ -334,6 +377,48 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   }, [refreshProfile, refreshSecondaryData]);
 
   useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      appVisibilityRef.current = nextState;
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    AsyncStorage.getItem(UNREAD_STORAGE_KEY)
+      .then((storedValue) => {
+        if (!storedValue) return;
+        const parsedIds = JSON.parse(storedValue);
+        if (Array.isArray(parsedIds)) {
+          setUnreadMessageIds(parsedIds.filter((value) => typeof value === 'string'));
+        }
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        unreadLoadedRef.current = true;
+      });
+  }, []);
+
+  useEffect(() => {
+    if (!unreadLoadedRef.current) return;
+    AsyncStorage.setItem(UNREAD_STORAGE_KEY, JSON.stringify(unreadMessageIds)).catch(() => undefined);
+  }, [unreadMessageIds]);
+
+  useEffect(() => {
+    if (activePath === '/chat') {
+      setUnreadMessageIds([]);
+      setLatestChatNotification(null);
+    }
+  }, [activePath]);
+
+  useEffect(() => {
+    if (!currentUser?._id) return;
+    syncUnreadMessages(messages);
+  }, [currentUser?._id, messages, syncUnreadMessages]);
+
+  useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setAuthUser(user);
       setIsInitializing(false);
@@ -345,6 +430,8 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
         setMoments([]);
         setGoals([]);
         setCalls([]);
+        setUnreadMessageIds([]);
+        setLatestChatNotification(null);
         socketRef.current?.disconnect();
         socketRef.current = null;
         return;
@@ -394,6 +481,21 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       upsertMessage(incomingMessage);
+
+      const isIncomingFromPartner = incomingMessage.senderId?._id === currentUser.partnerId?._id;
+      const shouldTrackAsUnread = isIncomingFromPartner && activePath !== '/chat';
+
+      if (shouldTrackAsUnread) {
+        setUnreadMessageIds((prev) => (prev.includes(incomingMessage._id) ? prev : [...prev, incomingMessage._id]));
+
+        if (appVisibilityRef.current === 'active') {
+          setLatestChatNotification({
+            messageId: incomingMessage._id,
+            senderName: currentUser.customPartnerName || currentUser.partnerId?.displayName || 'Partner',
+            preview: getMessagePreview(incomingMessage),
+          });
+        }
+      }
     });
     socket.on('message:sent', ({ clientTempId, message }: MessageDeliveryPayload) => {
       if (!message) return;
@@ -488,7 +590,16 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       socket.disconnect();
       socketRef.current = null;
     };
-  }, [currentUser?._id, currentUser?.partnerId?._id, loadCalls, refreshProfile, upsertMessage]);
+  }, [
+    activePath,
+    currentUser?._id,
+    currentUser?.customPartnerName,
+    currentUser?.partnerId?._id,
+    currentUser?.partnerId?.displayName,
+    loadCalls,
+    refreshProfile,
+    upsertMessage,
+  ]);
 
   useEffect(() => {
     if (!authUser || !currentUser) return;
@@ -521,8 +632,20 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       latestOfferSignal,
       latestAnswerSignal,
       latestIceCandidateSignal,
+      unreadChatCount,
+      latestChatNotification,
       error,
       setAuthMode,
+      setActivePath: (path) => {
+        setActivePathState(path);
+        if (path === '/chat') {
+          setUnreadMessageIds([]);
+          setLatestChatNotification(null);
+        }
+      },
+      dismissChatNotification: () => {
+        setLatestChatNotification(null);
+      },
       signIn: async (email, password) => {
         setIsLoading(true);
         setError(null);
@@ -826,6 +949,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       isLoading,
       isSignedIn,
       latestAnswerSignal,
+      latestChatNotification,
       latestIceCandidateSignal,
       latestOfferSignal,
       loadCalls,
@@ -839,6 +963,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       partnerTyping,
       refreshAll,
       refreshProfile,
+      unreadChatCount,
     ]
   );
 
