@@ -115,6 +115,45 @@ export const sendMessage = async (req: AuthRequest, res: Response) => {
   }
 };
 
+// @desc    Mark message as delivered
+// @route   PUT /api/messages/:id/delivered
+// @access  Private
+export const markMessageAsDelivered = async (req: AuthRequest, res: Response) => {
+  const { id } = req.params;
+  const user = req.user;
+
+  try {
+    const message = await Message.findById(id);
+
+    if (!message) {
+      return res.status(404).json({ error: 'Message not found.' });
+    }
+
+    if (message.recipientId.toString() !== user._id.toString()) {
+      return res.status(403).json({ error: 'You can only mark messages as delivered if you are the recipient.' });
+    }
+
+    if (message.deliveryStatus === 'read' || message.deliveryStatus === 'delivered') {
+      const populatedMessage = await getPopulatedMessage(String(message._id));
+      return res.json(populatedMessage);
+    }
+
+    message.deliveryStatus = 'delivered';
+    await message.save();
+
+    const populatedMessage = await getPopulatedMessage(String(message._id));
+
+    if (populatedMessage) {
+      emitToUser(String(message.senderId), 'message:update', populatedMessage);
+      emitToUser(String(message.recipientId), 'message:update', populatedMessage);
+    }
+
+    res.json(populatedMessage);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
 // @desc    Send a voice message to the partner
 // @route   POST /api/messages/audio
 // @access  Private
@@ -157,8 +196,8 @@ export const sendVoiceMessage = async (req: AuthRequest, res: Response) => {
     const populatedMessage = await getPopulatedMessage(String(message._id));
 
     if (populatedMessage) {
-      emitToUser(String(message.senderId), 'message:update', populatedMessage);
-      emitToUser(String(message.recipientId), 'message:update', populatedMessage);
+      emitToUser(String(user.partnerId), 'message:new', populatedMessage);
+      emitToUser(String(user._id), 'message:sent', { clientTempId, message: populatedMessage });
     }
 
     res.status(201).json(populatedMessage);
@@ -531,9 +570,12 @@ export const markMessageAsRead = async (req: AuthRequest, res: Response) => {
     message.readAt = new Date();
     await message.save();
 
-    const populatedMessage = await Message.findById(message._id)
-      .populate('senderId', 'displayName avatarUrl')
-      .populate('recipientId', 'displayName avatarUrl');
+    const populatedMessage = await getPopulatedMessage(String(message._id));
+
+    if (populatedMessage) {
+      emitToUser(String(message.senderId), 'message:update', populatedMessage);
+      emitToUser(String(message.recipientId), 'message:update', populatedMessage);
+    }
 
     res.json(populatedMessage);
   } catch (error: any) {
