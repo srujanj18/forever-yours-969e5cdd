@@ -2,7 +2,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { router } from 'expo-router';
-import { ArrowLeft, CalendarDays, ChevronDown, Copy, Image as ImageIcon, Link2, Mic, Pause, Pencil, Phone, Play, Reply, RotateCcw, Search, Send, Square, Trash2, Users, Video } from 'lucide-react-native';
+import { ArrowLeft, CalendarDays, Check, CheckCheck, ChevronDown, Copy, Image as ImageIcon, Link2, Mic, Pause, Pencil, Phone, Play, Reply, RotateCcw, Search, Send, Square, Trash2, Users, Video } from 'lucide-react-native';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Animated, AppState, Image, Linking, Modal, PanResponder, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { AppButton, AppShell, AvatarBadge, Card, EmptyState, FormModal, IconButton, ProfileShortcut, theme } from '../components/app-ui';
@@ -62,6 +62,17 @@ function getMessagePreview(message?: Pick<Message, 'content' | 'mediaType'> | nu
   if (!message) return '';
   if (message.content?.trim() && !isGeneratedMediaCaption(message)) return message.content;
   return message.mediaType?.startsWith('video') ? 'Video attachment' : 'Photo attachment';
+}
+
+function MessageStatusIcon({ message }: { message: Message }) {
+  const status = message.deliveryStatus || (message.isRead ? 'read' : 'sent');
+  const iconColor = status === 'read' ? '#22c55e' : 'rgba(255,255,255,0.75)';
+
+  if (status === 'delivered' || status === 'read') {
+    return <CheckCheck size={14} color={iconColor} />;
+  }
+
+  return <Check size={14} color="rgba(255,255,255,0.75)" />;
 }
 
 function SwipeableMessage({
@@ -178,6 +189,7 @@ export default function ChatScreen() {
     startTyping,
     stopTyping,
     startCall,
+    markConversationAsRead,
   } = useAppState();
 
   const [draft, setDraft] = useState('');
@@ -285,6 +297,10 @@ export default function ChatScreen() {
       subscription.remove();
     };
   }, []);
+
+  useEffect(() => {
+    void markConversationAsRead();
+  }, [markConversationAsRead, messages.length]);
 
   const openCallScreen = (type: 'voice' | 'video') => {
     startCall(type);
@@ -849,7 +865,10 @@ export default function ChatScreen() {
                                     <View style={{ width: playingAudioId === message._id ? '70%' : '38%', height: '100%', borderRadius: 999, backgroundColor: own ? '#fff' : theme.rose }} />
                                   </View>
                                 </View>
-                                <Text style={{ fontSize: 11, color: own ? '#dbeafe' : theme.secondaryText }}>{messageTime}</Text>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                                  <Text style={{ fontSize: 11, color: own ? '#dbeafe' : theme.secondaryText }}>{messageTime}</Text>
+                                  {own ? <MessageStatusIcon message={message} /> : null}
+                                </View>
                               </View>
                             </Pressable>
                           ) : (
@@ -886,6 +905,7 @@ export default function ChatScreen() {
                                   }}
                                 >
                                   <Text style={{ fontSize: 11, color: '#fff' }}>{messageTime}</Text>
+                                  {own ? <MessageStatusIcon message={message} /> : null}
                                 </View>
                               </View>
                             </Pressable>
@@ -913,6 +933,7 @@ export default function ChatScreen() {
                         <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8, alignItems: 'center', paddingHorizontal: mediaUrl ? 8 : 0, paddingBottom: mediaUrl ? 4 : 0 }}>
                           {message.isEdited ? <Text style={{ fontSize: 11, color: bubbleMetaColor }}>edited</Text> : null}
                           <Text style={{ fontSize: 11, color: bubbleMetaColor, textAlign: 'right' }}>{messageTime}</Text>
+                          {own ? <MessageStatusIcon message={message} /> : null}
                         </View>
                       ) : null}
                     </View>

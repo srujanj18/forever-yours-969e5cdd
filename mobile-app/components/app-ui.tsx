@@ -119,7 +119,7 @@ export function AppShell({
           <View style={styles.notificationDot} />
           <View style={styles.notificationContent}>
             <Text style={styles.notificationTitle} numberOfLines={1}>
-              {latestChatNotification.senderName}
+              {latestChatNotification.senderName} - {latestChatNotification.unreadCount} unread
             </Text>
             <Text style={styles.notificationText} numberOfLines={2}>
               {latestChatNotification.preview}

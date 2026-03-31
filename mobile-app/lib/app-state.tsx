@@ -71,6 +71,7 @@ type ChatNotification = {
   messageId: string;
   senderName: string;
   preview: string;
+  unreadCount: number;
 };
 
 type AppStateValue = {
@@ -100,6 +101,7 @@ type AppStateValue = {
   setAuthMode: (mode: AuthMode) => void;
   setActivePath: (path: string) => void;
   dismissChatNotification: () => void;
+  markConversationAsRead: () => Promise<void>;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (name: string, email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
@@ -137,7 +139,7 @@ type AppStateValue = {
 };
 
 const AppStateContext = createContext<AppStateValue | null>(null);
-const UNREAD_STORAGE_KEY = 'chat-unread-message-ids';
+const UNREAD_STORAGE_KEY = 'chat-live-unread-message-ids-v2';
 
 function getMessagePreview(message: Pick<Message, 'content' | 'mediaType'>) {
   const content = message.content?.trim();
@@ -284,22 +286,46 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     setCurrentUser(response.user);
   }, []);
 
-  const syncUnreadMessages = useCallback((incomingMessages: Message[], nextPath = activePath) => {
-    if (!currentUser?._id) return;
+  const reconcileUnreadMessages = useCallback((incomingMessages: Message[], nextPath = activePath) => {
+    if (nextPath === '/chat') {
+      setUnreadMessageIds([]);
+      return;
+    }
 
-    const incomingUnreadIds = incomingMessages
-      .filter((message) => message.senderId?._id !== currentUser._id)
-      .filter((message) => !message.isRead)
-      .map((message) => message._id);
+    setUnreadMessageIds((prev) =>
+      prev.filter((messageId) =>
+        incomingMessages.some((message) => message._id === messageId && !message.isRead && !message.isDeleted)
+      )
+    );
+  }, [activePath]);
 
-    setUnreadMessageIds(nextPath === '/chat' ? [] : incomingUnreadIds);
-  }, [activePath, currentUser?._id]);
+  const markMessageAsDeliveredInternal = useCallback(async (messageId: string) => {
+    try {
+      const response = await api.put<Message>(`/messages/${messageId}/delivered`, {});
+      upsertMessage(response);
+    } catch {}
+  }, [upsertMessage]);
+
+  const markMessageAsReadInternal = useCallback(async (messageId: string) => {
+    try {
+      const response = await api.put<Message>(`/messages/${messageId}/read`, {});
+      upsertMessage(response);
+      setUnreadMessageIds((prev) => prev.filter((id) => id !== messageId));
+    } catch {}
+  }, [upsertMessage]);
 
   const loadMessages = useCallback(async () => {
     try {
       const response = await api.get<Message[]>('/messages');
       setMessages(response);
-      syncUnreadMessages(response);
+      reconcileUnreadMessages(response);
+
+      if (activePath === '/chat' && currentUser?._id) {
+        const unreadIncoming = response.filter(
+          (message) => message.senderId?._id !== currentUser._id && !message.isRead
+        );
+        await Promise.allSettled(unreadIncoming.map((message) => markMessageAsReadInternal(message._id)));
+      }
     } catch (err: any) {
       if (!String(err?.message || '').includes('not connected')) {
         throw err;
@@ -307,7 +333,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       setMessages([]);
       setUnreadMessageIds([]);
     }
-  }, [syncUnreadMessages]);
+  }, [activePath, currentUser?._id, markMessageAsReadInternal, reconcileUnreadMessages]);
 
   const loadGallery = useCallback(async () => {
     const response = await api.get<{ media: MediaItem[] }>('/gallery');
@@ -414,9 +440,8 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   }, [activePath]);
 
   useEffect(() => {
-    if (!currentUser?._id) return;
-    syncUnreadMessages(messages);
-  }, [currentUser?._id, messages, syncUnreadMessages]);
+    reconcileUnreadMessages(messages);
+  }, [messages, reconcileUnreadMessages]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
@@ -485,16 +510,27 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       const isIncomingFromPartner = incomingMessage.senderId?._id === currentUser.partnerId?._id;
       const shouldTrackAsUnread = isIncomingFromPartner && activePath !== '/chat';
 
-      if (shouldTrackAsUnread) {
-        setUnreadMessageIds((prev) => (prev.includes(incomingMessage._id) ? prev : [...prev, incomingMessage._id]));
+      if (isIncomingFromPartner && activePath === '/chat') {
+        void markMessageAsReadInternal(incomingMessage._id);
+      } else if (isIncomingFromPartner && appVisibilityRef.current === 'active') {
+        void markMessageAsDeliveredInternal(incomingMessage._id);
+      }
 
-        if (appVisibilityRef.current === 'active') {
-          setLatestChatNotification({
-            messageId: incomingMessage._id,
-            senderName: currentUser.customPartnerName || currentUser.partnerId?.displayName || 'Partner',
-            preview: getMessagePreview(incomingMessage),
-          });
-        }
+      if (shouldTrackAsUnread) {
+        setUnreadMessageIds((prev) => {
+          const nextIds = prev.includes(incomingMessage._id) ? prev : [...prev, incomingMessage._id];
+
+          if (appVisibilityRef.current === 'active') {
+            setLatestChatNotification({
+              messageId: incomingMessage._id,
+              senderName: currentUser.customPartnerName || currentUser.partnerId?.displayName || 'Partner',
+              preview: getMessagePreview(incomingMessage),
+              unreadCount: nextIds.length,
+            });
+          }
+
+          return nextIds;
+        });
       }
     });
     socket.on('message:sent', ({ clientTempId, message }: MessageDeliveryPayload) => {
@@ -597,6 +633,8 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
     currentUser?.partnerId?._id,
     currentUser?.partnerId?.displayName,
     loadCalls,
+    markMessageAsDeliveredInternal,
+    markMessageAsReadInternal,
     refreshProfile,
     upsertMessage,
   ]);
@@ -645,6 +683,15 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       },
       dismissChatNotification: () => {
         setLatestChatNotification(null);
+      },
+      markConversationAsRead: async () => {
+        if (!currentUser?._id) return;
+
+        const unreadIncomingMessages = messages.filter(
+          (message) => message.senderId?._id !== currentUser._id && !message.isRead
+        );
+
+        await Promise.allSettled(unreadIncomingMessages.map((message) => markMessageAsReadInternal(message._id)));
       },
       signIn: async (email, password) => {
         setIsLoading(true);
@@ -956,6 +1003,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
       loadGallery,
       loadGoals,
       loadMoments,
+      markMessageAsReadInternal,
       messages,
       moments,
       partner,
