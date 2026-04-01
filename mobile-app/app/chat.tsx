@@ -303,9 +303,14 @@ export default function ChatScreen() {
   }, [markConversationAsRead, messages.length]);
 
   const openCallScreen = (type: 'voice' | 'video') => {
-    startCall(type);
     setIsCallMenuVisible(false);
-    router.push((type === 'voice' ? '/voice' : '/video') as never);
+    if (type === 'voice') {
+      startCall(type);
+      router.push('/voice' as never);
+      return;
+    }
+
+    router.push('/video' as never);
   };
 
   const applyImageEdit = async (action: 'rotate' | 'flip' | 'reset') => {

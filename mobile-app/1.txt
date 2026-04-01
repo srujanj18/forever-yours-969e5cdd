@@ -1,0 +1,10 @@
+
+this is to push updates to the git, and then rebuild the render
+PS C:\Users\sruja\Documents\forever-yours-969e5cdd> git add .
+>> git commit -m "Update mobile app + server changes"
+>> git push origin main
+
+this is for building apk
+PS C:\Users\sruja\Documents\forever-yours-969e5cdd\mobile-app> cd C:\Users\sruja\Documents\forever-yours-969e5cdd\mobile-app                
+>> eas build -p android --profile production-apk --clear-cache
+>> 
