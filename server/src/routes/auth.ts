@@ -2,7 +2,7 @@
 import express, { Request } from 'express';
 import { getProfile, generateInvitation, acceptInvitation, registerUser, googleSignIn, updateProfile, uploadAvatar as uploadAvatarController, removeAvatar, updatePartnerProfile, updateCustomPartnerName } from '../controllers/auth';
 import { protect, optionalProtect } from '../middleware/auth';
-import { createRateLimit, validateAuthInput, validateCustomPartnerNameInput, validateFileUpload } from '../middleware/security';
+import { createRateLimit, validateAuthInput, validateCustomPartnerNameInput, validateFileUpload, validateProfileInput } from '../middleware/security';
 import multer, { StorageEngine } from 'multer';
 import path from 'path';
 
@@ -39,7 +39,7 @@ const strictRateLimit = createRateLimit(60 * 1000, 5); // 5 requests per minute 
 
 router.post('/register', authRateLimit, protect, registerUser);
 router.post('/google-signin', authRateLimit, protect, googleSignIn);
-router.put('/profile', authRateLimit, protect, validateAuthInput, updateProfile);
+router.put('/profile', authRateLimit, protect, validateProfileInput, updateProfile);
 router.put('/custom-partner-name', authRateLimit, protect, validateCustomPartnerNameInput, updateCustomPartnerName);
 router.get('/profile', protect, getProfile);
 router.post('/generate-invitation', strictRateLimit, protect, validateAuthInput, generateInvitation);

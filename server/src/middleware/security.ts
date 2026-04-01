@@ -83,6 +83,27 @@ export const validateAuthInput = [
   }
 ];
 
+export const validateProfileInput = [
+  body('displayName')
+    .exists({ values: 'falsy' })
+    .withMessage('Display name is required')
+    .bail()
+    .isLength({ min: 1, max: 50 })
+    .withMessage('Display name must be between 1 and 50 characters')
+    .trim()
+    .escape(),
+  (req: Request, res: Response, next: NextFunction) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        error: 'Invalid input data',
+        details: errors.array()
+      });
+    }
+    next();
+  }
+];
+
 export const validateCustomPartnerNameInput = [
   body('customPartnerName')
     .isLength({ min: 1, max: 50 })
