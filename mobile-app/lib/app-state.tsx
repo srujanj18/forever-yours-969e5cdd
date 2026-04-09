@@ -140,6 +140,45 @@ type AppStateValue = {
 
 const AppStateContext = createContext<AppStateValue | null>(null);
 const UNREAD_STORAGE_KEY = 'chat-live-unread-message-ids-v2';
+const PROFILE_CACHE_KEY = 'togetherly-cached-profile-v1';
+
+function createFallbackProfile(user: FirebaseUser): UserProfile {
+  return {
+    _id: user.uid,
+    firebaseUid: user.uid,
+    email: user.email || '',
+    displayName: user.displayName?.trim() || user.email?.split('@')[0] || 'Togetherly',
+    avatarUrl: user.photoURL || undefined,
+    customPartnerName: undefined,
+    partnerId: null,
+  };
+}
+
+async function readCachedProfile(firebaseUid: string): Promise<UserProfile | null> {
+  try {
+    const storedValue = await AsyncStorage.getItem(PROFILE_CACHE_KEY);
+    if (!storedValue) return null;
+
+    const parsed = JSON.parse(storedValue) as UserProfile | null;
+    if (!parsed || parsed.firebaseUid !== firebaseUid) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+async function writeCachedProfile(profile: UserProfile | null) {
+  try {
+    if (!profile) {
+      await AsyncStorage.removeItem(PROFILE_CACHE_KEY);
+      return;
+    }
+
+    await AsyncStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(profile));
+  } catch {
+    return;
+  }
+}
 
 function getMessagePreview(message: Pick<Message, 'content' | 'mediaType'>) {
   const content = message.content?.trim();
@@ -284,6 +323,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   const refreshProfile = useCallback(async () => {
     const response = await api.get<{ user: UserProfile }>('/auth/profile');
     setCurrentUser(response.user);
+    await writeCachedProfile(response.user);
   }, []);
 
   const reconcileUnreadMessages = useCallback((incomingMessages: Message[], nextPath = activePath) => {
@@ -483,8 +523,13 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
         setLatestChatNotification(null);
         socketRef.current?.disconnect();
         socketRef.current = null;
+        await writeCachedProfile(null);
         return;
       }
+
+      const cachedProfile = await readCachedProfile(user.uid);
+      setCurrentUser(cachedProfile || createFallbackProfile(user));
+
       try {
         await bootstrapSignedInState();
       } catch {}
