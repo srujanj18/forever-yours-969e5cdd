@@ -23,11 +23,10 @@ plugins {
 }
 
 extensions.configure(com.facebook.react.ReactSettingsExtension) { ex ->
-  if (System.getenv('EXPO_USE_COMMUNITY_AUTOLINKING') == '1') {
-    ex.autolinkLibrariesFromCommand()
-  } else {
-    ex.autolinkLibrariesFromCommand(expoAutolinking.rnConfigCommand)
-  }
+  // Force React Native community autolinking for RN libraries.
+  // This avoids Expo RN-module autolinking producing empty Android subprojects
+  // for community packages such as async-storage, screens, svg, and safe-area-context.
+  ex.autolinkLibrariesFromCommand()
 }
 expoAutolinking.useExpoModules()
 
