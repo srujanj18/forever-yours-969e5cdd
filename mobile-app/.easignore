@@ -2,6 +2,8 @@
 .android-user-home/
 .expo/
 .idea/
+android/
+ios/
 node_modules/
 togetherly-latest.apk
 *.log
