@@ -4,6 +4,7 @@ import { getProfile, generateInvitation, acceptInvitation, registerUser, googleS
 import { protect, optionalProtect } from '../middleware/auth';
 import { createRateLimit, validateAuthInput, validateCustomPartnerNameInput, validateFileUpload, validateProfileInput } from '../middleware/security';
 import multer, { StorageEngine } from 'multer';
+import fs from 'fs';
 import path from 'path';
 
 const router = express.Router();
@@ -12,6 +13,9 @@ const router = express.Router();
 const avatarStorage: StorageEngine = multer.diskStorage({
   destination: (req: Request, file: Express.Multer.File, cb: (error: Error | null, destination: string) => void) => {
     const uploadDir = path.join(process.cwd(), 'public', 'uploads');
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
     cb(null, uploadDir);
   },
   filename: (req: Request, file: Express.Multer.File, cb: (error: Error | null, filename: string) => void) => {

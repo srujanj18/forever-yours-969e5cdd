@@ -11,8 +11,16 @@ export const SOCKET_URL = API_BASE_URL.replace(/\/api$/, '');
 
 export function resolveAssetUrl(assetPath?: string | null) {
   if (!assetPath) return undefined;
-  if (assetPath.startsWith('http')) return assetPath;
-  return `${SOCKET_URL}${assetPath}`;
+  const trimmedPath = assetPath.trim();
+  if (!trimmedPath) return undefined;
+
+  // Preserve fully-qualified and device-local URIs so native viewers can open them directly.
+  if (/^[a-z][a-z0-9+.-]*:/i.test(trimmedPath)) {
+    return trimmedPath;
+  }
+
+  const normalizedPath = trimmedPath.startsWith('/') ? trimmedPath : `/${trimmedPath}`;
+  return `${SOCKET_URL}${normalizedPath}`;
 }
 
 async function getAuthToken() {

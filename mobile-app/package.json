@@ -4,13 +4,13 @@
   "main": "expo-router/entry",
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
+    "android": "expo run:android",
     "android:dev": "node scripts/android-workflow.js start",
     "android:install-apk": "node scripts/android-workflow.js install-apk",
     "android:launch": "node scripts/android-workflow.js launch",
     "android:redeploy": "node scripts/android-workflow.js redeploy",
     "android:install-custom-apk": "node scripts/android-workflow.js install-apk",
-    "ios": "expo start --ios",
+    "ios": "expo run:ios",
     "web": "expo start --web",
     "build": "eas build"
   },

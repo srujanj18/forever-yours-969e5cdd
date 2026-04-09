@@ -4,7 +4,7 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import { router } from 'expo-router';
 import { ArrowLeft, CalendarDays, Check, CheckCheck, ChevronDown, Copy, Image as ImageIcon, Link2, Mic, Pause, Pencil, Phone, Play, Reply, RotateCcw, Search, Send, Square, Trash2, Users, Video } from 'lucide-react-native';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Animated, AppState, Image, Linking, Modal, PanResponder, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { Alert, Animated, AppState, Image, KeyboardAvoidingView, Linking, Modal, PanResponder, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { AppButton, AppShell, AvatarBadge, Card, EmptyState, FormModal, IconButton, ProfileShortcut, theme } from '../components/app-ui';
 import { resolveAssetUrl } from '../lib/api';
 import { useAppState } from '../lib/app-state';
@@ -704,21 +704,26 @@ export default function ChatScreen() {
         scroll={false}
         autoBack={false}
       >
-        <View style={{ flex: 1, gap: 14 }}>
-          <View
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 8,
-              backgroundColor: theme.surface,
-              borderWidth: 1,
-              borderColor: theme.border,
-              borderRadius: 22,
-              paddingHorizontal: 10,
-              paddingVertical: 10,
-            }}
-          >
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 10 : 0}
+        >
+          <View style={{ flex: 1, gap: 14 }}>
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 8,
+                backgroundColor: theme.surface,
+                borderWidth: 1,
+                borderColor: theme.border,
+                borderRadius: 22,
+                paddingHorizontal: 10,
+                paddingVertical: 10,
+              }}
+            >
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
               <IconButton
                 label="Back"
@@ -772,15 +777,16 @@ export default function ChatScreen() {
             </View>
           </View>
 
-          <ScrollView
-            ref={scrollViewRef}
-            style={{ flex: 1 }}
-            contentContainerStyle={{ gap: 12, paddingBottom: 8 }}
-            showsVerticalScrollIndicator={false}
-            keyboardShouldPersistTaps="handled"
-            scrollEventThrottle={16}
-            decelerationRate="fast"
-          >
+            <ScrollView
+              ref={scrollViewRef}
+              style={{ flex: 1 }}
+              contentContainerStyle={{ gap: 12, paddingBottom: 16 }}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+              scrollEventThrottle={16}
+              decelerationRate="fast"
+            >
             {messages.length === 0 ? <EmptyState title="No messages yet" subtitle="Start the thread and make this space feel lived in." /> : null}
             {messages.map((message) => {
               const own = message.senderId?._id === currentUser._id;
@@ -946,94 +952,95 @@ export default function ChatScreen() {
                 </SwipeableMessage>
               );
             })}
-          </ScrollView>
+            </ScrollView>
 
-          {replyingMessage ? (
-            <Card style={{ backgroundColor: theme.mutedSurface, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-              <View style={{ flex: 1, gap: 4 }}>
-                <Text style={{ color: theme.rose, fontWeight: '700' }}>Replying to message</Text>
-                <Text style={{ color: theme.secondaryText }} numberOfLines={1}>
-                  {getMessagePreview(replyingMessage)}
-                </Text>
-              </View>
-              <IconButton label="Cancel reply" onPress={() => setReplyTo(undefined)} icon={<ArrowLeft size={18} color={theme.rose} />} />
-            </Card>
-          ) : null}
-
-          {editingMessage ? (
-            <Card style={{ backgroundColor: theme.mutedSurface, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-              <View style={{ flex: 1, gap: 4 }}>
-                <Text style={{ color: theme.rose, fontWeight: '700' }}>Editing message</Text>
-                <Text style={{ color: theme.secondaryText }} numberOfLines={1}>
-                  {getMessagePreview(editingMessage)}
-                </Text>
-              </View>
-              <IconButton
-                label="Cancel edit"
-                onPress={() => {
-                  setEditingMessageId(undefined);
-                  setDraft('');
-                }}
-                icon={<ArrowLeft size={18} color={theme.rose} />}
-              />
-            </Card>
-          ) : null}
-
-          <View style={{ backgroundColor: theme.surface, borderWidth: 1, borderColor: theme.border, borderRadius: 24, padding: 12, flexDirection: 'row', alignItems: 'flex-end', gap: 10 }}>
-            <IconButton label="Share media" onPress={() => void pickAndSendMedia()} icon={<ImageIcon size={18} color={theme.rose} />} />
-            {isRecordingVoiceNote ? (
-              <View style={{ flex: 1, minHeight: 46, borderRadius: 18, backgroundColor: theme.mutedSurface, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 14 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                  <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: theme.danger }} />
-                  <Text style={{ color: theme.text, fontWeight: '700' }}>Recording voice note...</Text>
+            {replyingMessage ? (
+              <Card style={{ backgroundColor: theme.mutedSurface, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <View style={{ flex: 1, gap: 4 }}>
+                  <Text style={{ color: theme.rose, fontWeight: '700' }}>Replying to message</Text>
+                  <Text style={{ color: theme.secondaryText }} numberOfLines={1}>
+                    {getMessagePreview(replyingMessage)}
+                  </Text>
                 </View>
-                <Pressable
-                  onPress={() => void stopVoiceNoteRecording()}
-                  style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: theme.rose, alignItems: 'center', justifyContent: 'center' }}
-                >
-                  <Square size={16} color="#fff" fill="#fff" />
-                </Pressable>
-              </View>
-            ) : (
-              <>
-                <TextInput
-                  value={draft}
-                  onChangeText={(value) => {
-                    setDraft(value);
-                    if (editingMessageId) return;
-                    if (value.trim()) startTyping();
-                    else stopTyping();
+                <IconButton label="Cancel reply" onPress={() => setReplyTo(undefined)} icon={<ArrowLeft size={18} color={theme.rose} />} />
+              </Card>
+            ) : null}
+
+            {editingMessage ? (
+              <Card style={{ backgroundColor: theme.mutedSurface, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <View style={{ flex: 1, gap: 4 }}>
+                  <Text style={{ color: theme.rose, fontWeight: '700' }}>Editing message</Text>
+                  <Text style={{ color: theme.secondaryText }} numberOfLines={1}>
+                    {getMessagePreview(editingMessage)}
+                  </Text>
+                </View>
+                <IconButton
+                  label="Cancel edit"
+                  onPress={() => {
+                    setEditingMessageId(undefined);
+                    setDraft('');
                   }}
-                  placeholder={editingMessageId ? 'Edit your message...' : 'Share your love...'}
-                  placeholderTextColor={theme.secondaryText}
-                  multiline
-                  style={{ flex: 1, maxHeight: 100, color: theme.text, paddingVertical: 8 }}
+                  icon={<ArrowLeft size={18} color={theme.rose} />}
                 />
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              </Card>
+            ) : null}
+
+            <View style={{ backgroundColor: theme.surface, borderWidth: 1, borderColor: theme.border, borderRadius: 24, padding: 12, flexDirection: 'row', alignItems: 'flex-end', gap: 10 }}>
+              <IconButton label="Share media" onPress={() => void pickAndSendMedia()} icon={<ImageIcon size={18} color={theme.rose} />} />
+              {isRecordingVoiceNote ? (
+                <View style={{ flex: 1, minHeight: 46, borderRadius: 18, backgroundColor: theme.mutedSurface, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 14 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                    <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: theme.danger }} />
+                    <Text style={{ color: theme.text, fontWeight: '700' }}>Recording voice note...</Text>
+                  </View>
                   <Pressable
-                    onPress={() => void startVoiceNoteRecording()}
-                    style={{ width: 46, height: 46, borderRadius: 23, backgroundColor: theme.mutedSurface, alignItems: 'center', justifyContent: 'center' }}
+                    onPress={() => void stopVoiceNoteRecording()}
+                    style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: theme.rose, alignItems: 'center', justifyContent: 'center' }}
                   >
-                    <Mic size={18} color={theme.rose} />
-                  </Pressable>
-                  <Pressable
-                    onPress={() => void submitComposer()}
-                    style={{
-                      width: 46,
-                      height: 46,
-                      borderRadius: 23,
-                      backgroundColor: draft.trim() || editingMessageId ? theme.rose : '#3A3E7A',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                  >
-                    <Send size={18} color="#fff" />
+                    <Square size={16} color="#fff" fill="#fff" />
                   </Pressable>
                 </View>
-              </>
-            )}
+              ) : (
+                <>
+                  <TextInput
+                    value={draft}
+                    onChangeText={(value) => {
+                      setDraft(value);
+                      if (editingMessageId) return;
+                      if (value.trim()) startTyping();
+                      else stopTyping();
+                    }}
+                    placeholder={editingMessageId ? 'Edit your message...' : 'Share your love...'}
+                    placeholderTextColor={theme.secondaryText}
+                    multiline
+                    style={{ flex: 1, maxHeight: 100, color: theme.text, paddingVertical: 8 }}
+                  />
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Pressable
+                      onPress={() => void startVoiceNoteRecording()}
+                      style={{ width: 46, height: 46, borderRadius: 23, backgroundColor: theme.mutedSurface, alignItems: 'center', justifyContent: 'center' }}
+                    >
+                      <Mic size={18} color={theme.rose} />
+                    </Pressable>
+                    <Pressable
+                      onPress={() => void submitComposer()}
+                      style={{
+                        width: 46,
+                        height: 46,
+                        borderRadius: 23,
+                        backgroundColor: draft.trim() || editingMessageId ? theme.rose : '#3A3E7A',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      <Send size={18} color="#fff" />
+                    </Pressable>
+                  </View>
+                </>
+              )}
+            </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </AppShell>
 
       <Modal visible={!!selectedMessage} transparent animationType="fade" onRequestClose={closeMessageActions}>
