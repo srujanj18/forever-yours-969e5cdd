@@ -82,7 +82,7 @@ export const getMessages = async (req: AuthRequest, res: Response) => {
 // @route   POST /api/messages
 // @access  Private
 export const sendMessage = async (req: AuthRequest, res: Response) => {
-  const { content, mediaUrl, mediaType, replyTo, clientTempId } = req.body;
+  const { content, mediaUrl, mediaType, replyTo, clientTempId, messageType, viewOnce } = req.body;
   const user = req.user;
 
   try {
@@ -96,6 +96,8 @@ export const sendMessage = async (req: AuthRequest, res: Response) => {
       content,
       mediaUrl: mediaUrl || null,
       mediaType: mediaType || null,
+      messageType: messageType || (mediaType?.startsWith('video/') ? 'video' : mediaType?.startsWith('image/') ? 'image' : 'text'),
+      viewOnce: Boolean(viewOnce && mediaUrl),
       replyTo: replyTo || null,
     });
 
@@ -263,9 +265,65 @@ export const deleteMessageForEveryone = async (req: AuthRequest, res: Response) 
 
     message.content = 'This message has been deleted';
     message.isDeleted = true;
+    message.mediaUrl = undefined;
+    message.mediaType = undefined;
+    message.messageType = 'text';
+    message.viewOnce = false;
+    message.openedAt = undefined;
+    message.reactions = [];
     await message.save();
 
     // Populate sender details and replyTo for the response
+    const populatedMessage = await getPopulatedMessage(String(message._id));
+
+    if (populatedMessage) {
+      emitToUser(String(message.senderId), 'message:update', populatedMessage);
+      emitToUser(String(message.recipientId), 'message:update', populatedMessage);
+    }
+
+    res.json(populatedMessage);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// @desc    Mark view-once media as opened
+// @route   PUT /api/messages/:id/view-once-opened
+// @access  Private
+export const markViewOnceOpened = async (req: AuthRequest, res: Response) => {
+  const { id } = req.params;
+  const user = req.user;
+
+  try {
+    const message = await Message.findById(id);
+
+    if (!message) {
+      return res.status(404).json({ error: 'Message not found.' });
+    }
+
+    if (message.recipientId.toString() !== user._id.toString()) {
+      return res.status(403).json({ error: 'Only the recipient can open this media.' });
+    }
+
+    if (!message.viewOnce) {
+      const populatedMessage = await getPopulatedMessage(String(message._id));
+      return res.json(populatedMessage);
+    }
+
+    if (!message.mediaUrl || !message.mediaType) {
+      const populatedMessage = await getPopulatedMessage(String(message._id));
+      return res.json(populatedMessage);
+    }
+
+    const openedLabel = message.mediaType.startsWith('video/') ? 'Opened a view once video' : 'Opened a view once photo';
+
+    message.content = openedLabel;
+    message.mediaUrl = undefined;
+    message.mediaType = undefined;
+    message.messageType = 'text';
+    message.openedAt = new Date();
+    await message.save();
+
     const populatedMessage = await getPopulatedMessage(String(message._id));
 
     if (populatedMessage) {

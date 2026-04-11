@@ -36,6 +36,8 @@ export type Message = {
   createdAt: string;
   mediaUrl?: string | null;
   mediaType?: string | null;
+  viewOnce?: boolean;
+  openedAt?: string | null;
   replyTo?: {
     _id: string;
     senderId: MessageUser;

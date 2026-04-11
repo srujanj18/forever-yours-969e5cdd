@@ -108,10 +108,11 @@ type AppStateValue = {
   refreshAll: () => Promise<void>;
   refreshProfile: () => Promise<void>;
   sendMessage: (text: string, replyTo?: string) => Promise<void>;
-  sendMediaMessage: (asset: UploadAsset, caption?: string, replyTo?: string) => Promise<void>;
+  sendMediaMessage: (asset: UploadAsset, caption?: string, replyTo?: string, viewOnce?: boolean) => Promise<void>;
   sendVoiceMessage: (asset: UploadAsset, replyTo?: string) => Promise<void>;
   editMessage: (id: string, text: string) => Promise<void>;
   deleteMessage: (id: string, deleteForEveryone?: boolean) => Promise<void>;
+  markViewOnceMediaOpened: (id: string) => Promise<void>;
   reactToMessage: (id: string, emoji: string) => Promise<void>;
   removeReaction: (id: string) => Promise<void>;
   generateInvitation: (email: string) => Promise<{ message: string; invitationLink?: string; emailSent?: boolean }>;
@@ -807,7 +808,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
           throw error;
         }
       },
-      sendMediaMessage: async (asset, caption, replyTo) => {
+      sendMediaMessage: async (asset, caption, replyTo, viewOnce) => {
         const uploadFormData = await buildFileFormData('file', asset, caption ? { caption } : undefined);
         const media = await api.post<MediaItem>('/gallery/upload', uploadFormData);
         const isVideoAttachment = media.mediaType?.startsWith('video/');
@@ -816,6 +817,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
           mediaUrl: media.mediaUrl,
           mediaType: media.mediaType,
           messageType: isVideoAttachment ? 'video' : 'image',
+          viewOnce: Boolean(viewOnce),
           replyTo,
         });
         upsertMessage(response);
@@ -881,6 +883,10 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
 
         await api.delete(`/messages/${id}/delete-for-me`);
         setMessages((prev) => prev.filter((message) => message._id !== id));
+      },
+      markViewOnceMediaOpened: async (id) => {
+        const response = await api.put<Message>(`/messages/${id}/view-once-opened`, {});
+        upsertMessage(response);
       },
       reactToMessage: async (id, emoji) => {
         const response = await api.post<Message>(`/messages/${id}/reactions`, { emoji });

@@ -4,7 +4,7 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import { router } from 'expo-router';
 import { ArrowLeft, CalendarDays, Check, CheckCheck, ChevronDown, Copy, Image as ImageIcon, Link2, Mic, Pause, Pencil, Phone, Play, Reply, RotateCcw, Search, Send, Square, Trash2, Users, Video } from 'lucide-react-native';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Animated, AppState, Image, KeyboardAvoidingView, Linking, Modal, PanResponder, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { Alert, Animated, AppState, Image, Keyboard, KeyboardAvoidingView, Linking, Modal, PanResponder, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { AppButton, AppShell, AvatarBadge, Card, EmptyState, FormModal, IconButton, ProfileShortcut, theme } from '../components/app-ui';
 import { resolveAssetUrl } from '../lib/api';
 import { useAppState } from '../lib/app-state';
@@ -78,12 +78,10 @@ function MessageStatusIcon({ message }: { message: Message }) {
 function SwipeableMessage({
   onReply,
   onLongPress,
-  onPress,
   children,
 }: {
   onReply: () => void;
   onLongPress: () => void;
-  onPress: () => void;
   children: React.ReactNode;
 }) {
   const translateX = useRef(new Animated.Value(0)).current;
@@ -118,7 +116,7 @@ function SwipeableMessage({
   return (
     <View style={{ overflow: 'hidden' }}>
       <Animated.View style={{ transform: [{ translateX }] }} {...panResponder.panHandlers}>
-        <Pressable onPress={onPress} onLongPress={onLongPress}>
+        <Pressable onLongPress={onLongPress} delayLongPress={220}>
           {children}
         </Pressable>
       </Animated.View>
@@ -190,6 +188,7 @@ export default function ChatScreen() {
     stopTyping,
     startCall,
     markConversationAsRead,
+    markViewOnceMediaOpened,
   } = useAppState();
 
   const [draft, setDraft] = useState('');
@@ -201,6 +200,7 @@ export default function ChatScreen() {
   const [activeMediaType, setActiveMediaType] = useState<string | null>(null);
   const [pendingMedia, setPendingMedia] = useState<PendingMedia | null>(null);
   const [pendingMediaCaption, setPendingMediaCaption] = useState('');
+  const [pendingMediaViewOnce, setPendingMediaViewOnce] = useState(false);
   const [isSendingPendingMedia, setIsSendingPendingMedia] = useState(false);
   const [isCallMenuVisible, setIsCallMenuVisible] = useState(false);
   const [isSearchVisible, setIsSearchVisible] = useState(false);
@@ -209,6 +209,7 @@ export default function ChatScreen() {
   const [isRecordingVoiceNote, setIsRecordingVoiceNote] = useState(false);
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
+  const [androidKeyboardHeight, setAndroidKeyboardHeight] = useState(0);
   const scrollViewRef = useRef<ScrollView | null>(null);
   const messageLayoutsRef = useRef<Record<string, number>>({});
   const activeSoundRef = useRef<Audio.Sound | null>(null);
@@ -246,6 +247,7 @@ export default function ChatScreen() {
       return null;
     });
     setPendingMediaCaption('');
+    setPendingMediaViewOnce(false);
     setIsSendingPendingMedia(false);
   };
 
@@ -301,6 +303,23 @@ export default function ChatScreen() {
   useEffect(() => {
     void markConversationAsRead();
   }, [markConversationAsRead, messages.length]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+
+    const showSubscription = Keyboard.addListener('keyboardDidShow', (event) => {
+      setAndroidKeyboardHeight(event.endCoordinates.height);
+      scrollToBottom();
+    });
+    const hideSubscription = Keyboard.addListener('keyboardDidHide', () => {
+      setAndroidKeyboardHeight(0);
+    });
+
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, []);
 
   const openCallScreen = (type: 'voice' | 'video') => {
     setIsCallMenuVisible(false);
@@ -465,17 +484,46 @@ export default function ChatScreen() {
     }
   };
 
-  const openMedia = async (mediaUrl?: string | null, mediaType?: string | null) => {
-    const resolvedUrl = resolveAssetUrl(mediaUrl);
-    if (!resolvedUrl) return;
-
-    if (mediaType?.startsWith('video/')) {
-      await Linking.openURL(resolvedUrl);
+  const openMedia = async (messageOrUrl?: Message | string | null, mediaType?: string | null) => {
+    const message = typeof messageOrUrl === 'object' && messageOrUrl ? messageOrUrl : null;
+    const resolvedUrl = resolveAssetUrl(message?.mediaUrl || (typeof messageOrUrl === 'string' ? messageOrUrl : null));
+    if (!resolvedUrl) {
+      Alert.alert('Media unavailable', 'This media is not available right now.');
       return;
     }
 
-    setActiveMediaUrl(resolvedUrl);
-    setActiveMediaType(mediaType || 'image/jpeg');
+    const resolvedMediaType = message?.mediaType || mediaType || 'image/jpeg';
+
+    if (resolvedMediaType.startsWith('video/')) {
+      setActiveMediaUrl(resolvedUrl);
+      setActiveMediaType(resolvedMediaType);
+    } else {
+      setActiveMediaUrl(resolvedUrl);
+      setActiveMediaType(resolvedMediaType);
+    }
+
+    if (message?.viewOnce && message.senderId?._id !== currentUser?._id && message.mediaUrl) {
+      try {
+        await markViewOnceMediaOpened(message._id);
+      } catch (error: any) {
+        Alert.alert('View once media', error?.message || 'Unable to update this media right now.');
+      }
+    }
+  };
+
+  const openMediaExternally = async () => {
+    if (!activeMediaUrl) return;
+
+    try {
+      await Linking.openURL(activeMediaUrl);
+    } catch (error: any) {
+      Alert.alert('Media unavailable', error?.message || 'Unable to open this media right now.');
+    }
+  };
+
+  const closeActiveMedia = () => {
+    setActiveMediaUrl(null);
+    setActiveMediaType(null);
   };
 
   const pickAndSendMedia = async () => {
@@ -506,6 +554,7 @@ export default function ChatScreen() {
           };
         });
         setPendingMediaCaption(draft.trim());
+        setPendingMediaViewOnce(false);
       };
 
       input.click();
@@ -537,6 +586,7 @@ export default function ChatScreen() {
       revokeUriOnClose: false,
     });
     setPendingMediaCaption(draft.trim());
+    setPendingMediaViewOnce(false);
   };
 
   const sendPendingMedia = async () => {
@@ -554,7 +604,8 @@ export default function ChatScreen() {
           type: pendingMedia.type,
         },
         pendingMediaCaption.trim() || undefined,
-        replyTo
+        replyTo,
+        pendingMediaViewOnce
       );
       setDraft('');
       setReplyTo(undefined);
@@ -705,19 +756,25 @@ export default function ChatScreen() {
         autoBack={false}
       >
         <KeyboardAvoidingView
-          style={{ flex: 1 }}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={{ flex: 2 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           keyboardVerticalOffset={Platform.OS === 'ios' ? 10 : 0}
         >
-          <View style={{ flex: 1, gap: 14 }}>
+          <View
+            style={{
+              flex: 1,
+              gap: 20,
+              paddingBottom: Platform.OS === 'android' ? androidKeyboardHeight : 0,
+            }}
+          >
             <View
               style={{
                 flexDirection: 'row',
                 alignItems: 'center',
                 justifyContent: 'space-between',
-                gap: 8,
+                gap: 6,
                 backgroundColor: theme.surface,
-                borderWidth: 1,
+                borderWidth: 0.5,
                 borderColor: theme.border,
                 borderRadius: 22,
                 paddingHorizontal: 10,
@@ -805,6 +862,7 @@ export default function ChatScreen() {
               const mediaCardBackground = isHighlighted ? '#2A2D67' : own ? '#5148e5' : '#1B1D4E';
               const reactionBackground = isHighlighted ? '#2A2D67' : own ? '#5148e5' : theme.mutedSurface;
               const mediaBubblePadding = mediaUrl && !isAudio ? 4 : 12;
+              const showViewOncePill = Boolean(message.viewOnce && mediaUrl && !isAudio);
               const messageTime = new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
               return (
@@ -812,7 +870,6 @@ export default function ChatScreen() {
                   key={message._id}
                   onReply={() => beginReply(message)}
                   onLongPress={() => setSelectedMessage(message)}
-                  onPress={() => setSelectedMessage(message)}
                 >
                   <View
                     onLayout={(event) => {
@@ -883,7 +940,7 @@ export default function ChatScreen() {
                               </View>
                             </Pressable>
                           ) : (
-                            <Pressable onPress={() => void openMedia(message.mediaUrl, message.mediaType)}>
+                            <Pressable onPress={() => void openMedia(message)} onLongPress={() => setSelectedMessage(message)} delayLongPress={220}>
                               <View style={{ width: 248, borderRadius: 16, overflow: 'hidden', position: 'relative', backgroundColor: mediaCardBackground }}>
                                 {isVideo ? (
                                   <View style={{ height: 176, backgroundColor: mediaCardBackground, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 18 }}>
@@ -918,6 +975,21 @@ export default function ChatScreen() {
                                   <Text style={{ fontSize: 11, color: '#fff' }}>{messageTime}</Text>
                                   {own ? <MessageStatusIcon message={message} /> : null}
                                 </View>
+                                {showViewOncePill ? (
+                                  <View
+                                    style={{
+                                      position: 'absolute',
+                                      left: 8,
+                                      top: 8,
+                                      paddingHorizontal: 10,
+                                      paddingVertical: 5,
+                                      borderRadius: 999,
+                                      backgroundColor: 'rgba(10, 11, 46, 0.78)',
+                                    }}
+                                  >
+                                    <Text style={{ fontSize: 11, color: '#fff', fontWeight: '700' }}>View once</Text>
+                                  </View>
+                                ) : null}
                               </View>
                             </Pressable>
                           )}
@@ -1281,6 +1353,46 @@ export default function ChatScreen() {
                 </>
               ) : null}
             </View>
+
+            <Pressable
+              onPress={() => setPendingMediaViewOnce((current) => !current)}
+              disabled={isSendingPendingMedia}
+              style={({ pressed }) => [
+                {
+                  borderRadius: 18,
+                  borderWidth: 1,
+                  borderColor: pendingMediaViewOnce ? theme.rose : theme.border,
+                  backgroundColor: pendingMediaViewOnce ? 'rgba(255,255,255,0.08)' : theme.surface,
+                  paddingHorizontal: 16,
+                  paddingVertical: 14,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  opacity: pressed ? 0.9 : 1,
+                },
+              ]}
+            >
+              <View style={{ flex: 1, paddingRight: 12 }}>
+                <Text style={{ color: theme.text, fontWeight: '700' }}>View once</Text>
+                <Text style={{ color: theme.secondaryText, marginTop: 4 }}>
+                  The media disappears from chat after your partner opens it one time.
+                </Text>
+              </View>
+              <View
+                style={{
+                  width: 24,
+                  height: 24,
+                  borderRadius: 12,
+                  borderWidth: 2,
+                  borderColor: pendingMediaViewOnce ? theme.rose : theme.border,
+                  backgroundColor: pendingMediaViewOnce ? theme.rose : 'transparent',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                {pendingMediaViewOnce ? <Check size={14} color="#fff" /> : null}
+              </View>
+            </Pressable>
           </View>
 
           <View style={{ flex: 1, paddingHorizontal: 18, paddingVertical: 18, gap: 18 }}>
@@ -1317,7 +1429,7 @@ export default function ChatScreen() {
                 <TextInput
                   value={pendingMediaCaption}
                   onChangeText={setPendingMediaCaption}
-                  placeholder="Type a message"
+                  placeholder={pendingMediaViewOnce ? 'Optional note for this view once media' : 'Type a message'}
                   placeholderTextColor={theme.secondaryText}
                   multiline
                   style={{ color: theme.text, maxHeight: 100 }}
@@ -1342,15 +1454,15 @@ export default function ChatScreen() {
         </View>
       </Modal>
 
-      <FormModal visible={!!activeMediaUrl} title={activeMediaType?.startsWith('video/') ? 'Shared Video' : 'Shared Photo'} onClose={() => setActiveMediaUrl(null)}>
+      <FormModal visible={!!activeMediaUrl} title={activeMediaType?.startsWith('video/') ? 'Shared Video' : 'Shared Photo'} onClose={closeActiveMedia}>
         <View style={{ gap: 16, paddingBottom: 12 }}>
           {activeMediaUrl && !activeMediaType?.startsWith('video/') ? (
             <Image source={{ uri: activeMediaUrl }} resizeMode="contain" style={{ width: '100%', height: 420, borderRadius: 20, backgroundColor: theme.surface }} />
           ) : null}
           {activeMediaType?.startsWith('video/') ? (
-            <Text style={{ color: theme.secondaryText, lineHeight: 22 }}>This video opens in your browser so you can view it full size.</Text>
+            <Text style={{ color: theme.secondaryText, lineHeight: 22 }}>Tap below to open this video in your device player or browser.</Text>
           ) : null}
-          {activeMediaUrl ? <AppButton title={activeMediaType?.startsWith('video/') ? 'Open Video' : 'Open in Browser'} onPress={() => void Linking.openURL(activeMediaUrl)} /> : null}
+          {activeMediaType?.startsWith('video/') ? <AppButton title="Open Video" onPress={() => void openMediaExternally()} /> : null}
         </View>
       </FormModal>
     </>

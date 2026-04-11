@@ -1,6 +1,6 @@
 
 import express from 'express';
-import { getMessages, sendMessage, sendVoiceMessage, editMessage, deleteMessageForEveryone, deleteMessageForMe, addReaction, removeReaction, markMessageAsDelivered, markMessageAsRead } from '../controllers/messages';
+import { getMessages, sendMessage, sendVoiceMessage, editMessage, deleteMessageForEveryone, deleteMessageForMe, addReaction, removeReaction, markMessageAsDelivered, markMessageAsRead, markViewOnceOpened } from '../controllers/messages';
 import { protect } from '../middleware/auth';
 import { createRateLimit, validateMessageInput } from '../middleware/security';
 
@@ -15,6 +15,7 @@ router.post('/', messageRateLimit, protect, validateMessageInput, sendMessage);
 router.post('/audio', messageRateLimit, protect, sendVoiceMessage);
 router.put('/:id/delivered', messageRateLimit, protect, markMessageAsDelivered);
 router.put('/:id/read', messageRateLimit, protect, markMessageAsRead);
+router.put('/:id/view-once-opened', messageRateLimit, protect, markViewOnceOpened);
 router.put('/:id', messageRateLimit, protect, validateMessageInput, editMessage);
 router.delete('/:id/delete-for-everyone', strictMessageRateLimit, protect, deleteMessageForEveryone);
 router.delete('/:id/delete-for-me', strictMessageRateLimit, protect, deleteMessageForMe);

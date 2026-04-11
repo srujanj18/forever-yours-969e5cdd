@@ -14,6 +14,8 @@ export interface IMessage extends Document {
   isRead: boolean;
   mediaUrl?: string;
   mediaType?: string;
+  viewOnce?: boolean;
+  openedAt?: Date;
   replyTo?: mongoose.Types.ObjectId;
   isEdited?: boolean;
   isDeleted?: boolean;
@@ -65,6 +67,14 @@ const messageSchema: Schema = new Schema({
   },
   mediaType: {
     type: String,
+    default: null,
+  },
+  viewOnce: {
+    type: Boolean,
+    default: false,
+  },
+  openedAt: {
+    type: Date,
     default: null,
   },
   replyTo: {
