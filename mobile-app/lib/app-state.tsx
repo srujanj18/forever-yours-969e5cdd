@@ -809,7 +809,10 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
         }
       },
       sendMediaMessage: async (asset, caption, replyTo, viewOnce) => {
-        const uploadFormData = await buildFileFormData('file', asset, caption ? { caption } : undefined);
+        const uploadFormData = await buildFileFormData('file', asset, {
+          ...(caption ? { caption } : {}),
+          saveToGallery: viewOnce ? 'false' : 'true',
+        });
         const media = await api.post<MediaItem>('/gallery/upload', uploadFormData);
         const isVideoAttachment = media.mediaType?.startsWith('video/');
         const response = await api.post<Message>('/messages', {
@@ -821,7 +824,7 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
           replyTo,
         });
         upsertMessage(response);
-        if (!media.mediaType?.startsWith('audio/')) {
+        if (!viewOnce && !media.mediaType?.startsWith('audio/')) {
           setGallery((prev) => (prev.some((item) => item._id === media._id) ? prev : [media, ...prev]));
         }
       },

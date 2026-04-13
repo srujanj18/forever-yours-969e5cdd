@@ -81,7 +81,8 @@ export const uploadMedia = async (req: AuthRequest, res: Response) => {
       return res.status(400).json({ error: 'No file provided.' });
     }
 
-    const { caption } = req.body;
+    const { caption, saveToGallery } = req.body;
+    const shouldSaveToGallery = saveToGallery !== 'false';
     const localFilePath = req.file.path || path.join(process.cwd(), 'public', 'uploads', req.file.filename);
     let mediaUrl: string;
     try {
@@ -90,6 +91,22 @@ export const uploadMedia = async (req: AuthRequest, res: Response) => {
       // Keep chat media functional even when Firebase Storage credentials are invalid.
       console.error('Firebase upload failed, falling back to local file hosting:', storageError?.message || storageError);
       mediaUrl = toPublicUploadsUrl(req.file.filename);
+    }
+
+    if (!shouldSaveToGallery) {
+      if (!mediaUrl.startsWith('/uploads/') && fs.existsSync(localFilePath)) {
+        fs.unlinkSync(localFilePath);
+      }
+
+      return res.status(201).json({
+        _id: `ephemeral-${req.file.filename}`,
+        senderId: String(user._id),
+        recipientId: String(user.partnerId),
+        mediaUrl,
+        mediaType: req.file.mimetype,
+        caption: caption || undefined,
+        createdAt: new Date().toISOString(),
+      });
     }
 
     const media = new Media({

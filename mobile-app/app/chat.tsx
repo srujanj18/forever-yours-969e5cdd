@@ -756,14 +756,14 @@ export default function ChatScreen() {
         autoBack={false}
       >
         <KeyboardAvoidingView
-          style={{ flex: 2 }}
+          style={{ flex: 1 }}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           keyboardVerticalOffset={Platform.OS === 'ios' ? 10 : 0}
         >
           <View
             style={{
               flex: 1,
-              gap: 20,
+              gap: 15,
               paddingBottom: Platform.OS === 'android' ? androidKeyboardHeight : 0,
             }}
           >
@@ -774,7 +774,7 @@ export default function ChatScreen() {
                 justifyContent: 'space-between',
                 gap: 6,
                 backgroundColor: theme.surface,
-                borderWidth: 0.5,
+                borderWidth: 1,
                 borderColor: theme.border,
                 borderRadius: 22,
                 paddingHorizontal: 10,
@@ -862,7 +862,7 @@ export default function ChatScreen() {
               const mediaCardBackground = isHighlighted ? '#2A2D67' : own ? '#5148e5' : '#1B1D4E';
               const reactionBackground = isHighlighted ? '#2A2D67' : own ? '#5148e5' : theme.mutedSurface;
               const mediaBubblePadding = mediaUrl && !isAudio ? 4 : 12;
-              const showViewOncePill = Boolean(message.viewOnce && mediaUrl && !isAudio);
+              const isLockedViewOnceMedia = Boolean(message.viewOnce && mediaUrl && !isAudio);
               const messageTime = new Date(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
               return (
@@ -939,6 +939,47 @@ export default function ChatScreen() {
                                 </View>
                               </View>
                             </Pressable>
+                          ) : isLockedViewOnceMedia ? (
+                            <Pressable onPress={() => void openMedia(message)} onLongPress={() => setSelectedMessage(message)} delayLongPress={220}>
+                              <View
+                                style={{
+                                  width: 206,
+                                  minHeight: 74,
+                                  borderRadius: 18,
+                                  backgroundColor: own ? '#d6ffb7' : '#f3f4f6',
+                                  flexDirection: 'row',
+                                  alignItems: 'center',
+                                  gap: 12,
+                                  paddingHorizontal: 14,
+                                  paddingVertical: 12,
+                                }}
+                              >
+                                <View
+                                  style={{
+                                    width: 40,
+                                    height: 40,
+                                    borderRadius: 20,
+                                    backgroundColor: own ? 'rgba(53, 94, 0, 0.14)' : '#e5e7eb',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                  }}
+                                >
+                                  {isVideo ? <Video size={18} color={own ? '#365314' : '#111827'} /> : <ImageIcon size={18} color={own ? '#365314' : '#111827'} />}
+                                </View>
+                                <View style={{ flex: 1, gap: 4 }}>
+                                  <Text style={{ color: own ? '#365314' : '#111827', fontWeight: '700', fontSize: 16 }}>
+                                    {isVideo ? 'Video' : 'Photo'}
+                                  </Text>
+                                  <Text style={{ color: own ? 'rgba(54, 83, 20, 0.72)' : '#6b7280', fontSize: 12 }}>
+                                    {own ? 'View once media' : 'Tap to open once'}
+                                  </Text>
+                                </View>
+                                <View style={{ alignItems: 'flex-end', gap: 4 }}>
+                                  <Text style={{ fontSize: 11, color: own ? 'rgba(54, 83, 20, 0.72)' : '#6b7280' }}>{messageTime}</Text>
+                                  {own ? <MessageStatusIcon message={message} /> : null}
+                                </View>
+                              </View>
+                            </Pressable>
                           ) : (
                             <Pressable onPress={() => void openMedia(message)} onLongPress={() => setSelectedMessage(message)} delayLongPress={220}>
                               <View style={{ width: 248, borderRadius: 16, overflow: 'hidden', position: 'relative', backgroundColor: mediaCardBackground }}>
@@ -975,21 +1016,6 @@ export default function ChatScreen() {
                                   <Text style={{ fontSize: 11, color: '#fff' }}>{messageTime}</Text>
                                   {own ? <MessageStatusIcon message={message} /> : null}
                                 </View>
-                                {showViewOncePill ? (
-                                  <View
-                                    style={{
-                                      position: 'absolute',
-                                      left: 8,
-                                      top: 8,
-                                      paddingHorizontal: 10,
-                                      paddingVertical: 5,
-                                      borderRadius: 999,
-                                      backgroundColor: 'rgba(10, 11, 46, 0.78)',
-                                    }}
-                                  >
-                                    <Text style={{ fontSize: 11, color: '#fff', fontWeight: '700' }}>View once</Text>
-                                  </View>
-                                ) : null}
                               </View>
                             </Pressable>
                           )}
